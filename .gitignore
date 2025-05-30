@@ -1,5 +1,6 @@
 # Python
 venv/
+erp-backend/venv/
 __pycache__/
 *.pyc
 
