@@ -38,8 +38,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    'rest_framework',
-    'inventory',
+    "rest_framework",
+    "inventory",
 ]
 
 MIDDLEWARE = [
@@ -77,22 +77,25 @@ WSGI_APPLICATION = "erp.wsgi.application"
 
 from decouple import config
 
+# Database
+# local dev using sqlite，switch to PostgreSQL in the future
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': config('DB_NAME'),
-        'USER': config('DB_USER'),
-        'PASSWORD': config('DB_PASSWORD'),
-        'HOST': config('DB_HOST'),
-        'PORT': config('DB_PORT'),
+    "default": {
+        "ENGINE": config(
+            "DB_ENGINE",
+            default="django.db.backends.sqlite3",
+        ),
+        "NAME": config(
+            "DB_NAME",
+            default=str(BASE_DIR / "db.sqlite3"),
+        ),
+        # for PostgreSQL config
+        "USER": config("DB_USER", default=""),
+        "PASSWORD": config("DB_PASSWORD", default=""),
+        "HOST": config("DB_HOST", default=""),
+        "PORT": config("DB_PORT", default=""),
     }
 }
-
-
-
-print("DB_NAME from env:", config('DB_NAME'))
-
-
 
 
 # Password validation
