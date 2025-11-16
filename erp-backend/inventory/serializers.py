@@ -9,9 +9,9 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
 class OrderItemSerializer(serializers.ModelSerializer):
-    # 读：返回完整商品信息
+    # read: return product info
     product = ProductSerializer(read_only=True)
-    # 写：用 product_id 传主键
+    # write: product_id as primary key
     product_id = serializers.PrimaryKeyRelatedField(
         source="product",
         queryset=Product.objects.all(),
@@ -32,11 +32,11 @@ class OrderSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at"]
 
     def create(self, validated_data):
-        # 从数据中取出 items 部分
+        # get items part
         items_data = validated_data.pop("items", [])
-        # 创建订单本身
+        # create order itself
         order = Order.objects.create(**validated_data)
-        # 再创建每一条 OrderItem（触发 OrderItem.save() 里的扣库存逻辑）
+        # create each OrderItem, triggering OrderItem.save() to deduct inventory
         for item_data in items_data:
             OrderItem.objects.create(order=order, **item_data)
         return order
