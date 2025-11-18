@@ -23,8 +23,15 @@ class Product(models.Model):
 
 
 class Order(models.Model):
-    customer_name = models.CharField(max_length=100)
+    customer_name = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
+    customer = models.ForeignKey(
+        Customer,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="orders",
+    )
 
     def __str__(self):
         return f"Order #{self.id} by {self.customer_name} at {self.created_at.strftime('%Y-%m-%d')}"
