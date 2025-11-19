@@ -4,23 +4,28 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from django.utils import timezone
 from django.db.models import Sum
+
 from .models import Product, Order, Customer
 from .serializers import ProductSerializer, OrderSerializer, CustomerSerializer
+from .permissions import IsStaffOrReadOnly
 
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
+    permission_classes = [IsStaffOrReadOnly]
 
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
+    permission_classes = [IsStaffOrReadOnly]
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all().order_by("name")
     serializer_class = CustomerSerializer
+    permission_classes = [IsStaffOrReadOnly]
 
 
 @api_view(["GET"])

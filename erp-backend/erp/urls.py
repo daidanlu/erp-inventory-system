@@ -15,6 +15,7 @@ router.register(r"customers", CustomerViewSet)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("api-auth/", include("rest_framework.urls")),
     path("api/dashboard/", dashboard_summary),
     path("api/", include(router.urls)),
 ]
