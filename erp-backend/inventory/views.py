@@ -15,17 +15,43 @@ class ProductViewSet(viewsets.ModelViewSet):
     serializer_class = ProductSerializer
     permission_classes = [IsStaffOrReadOnly]
 
+    # exact filter field: ?stock=100, ?sku=P001
+    filterset_fields = {
+        "sku": ["exact", "icontains"],
+        "name": ["icontains"],
+        "stock": ["exact", "gte", "lte"],
+    }
+    # fuzzy search：?search=P00 or ?search=Test
+    search_fields = ["sku", "name"]
+    # sort: ?ordering=stock or ?ordering=-stock
+    ordering_fields = ["id", "sku", "name", "stock"]
+    ordering = ["sku"]
+
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
     permission_classes = [IsStaffOrReadOnly]
 
+    filterset_fields = ["customer", "customer_name", "created_at"]
+
+    search_fields = ["customer_name", "customer__name"]
+    ordering_fields = ["id", "created_at"]
+    ordering = ["-created_at"]
+
 
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all().order_by("name")
     serializer_class = CustomerSerializer
     permission_classes = [IsStaffOrReadOnly]
+
+    filterset_fields = {
+        "name": ["exact", "icontains"],
+        "email": ["exact", "icontains"],
+    }
+    search_fields = ["name", "email", "phone"]
+    ordering_fields = ["id", "name"]
+    ordering = ["name"]
 
 
 @api_view(["GET"])
