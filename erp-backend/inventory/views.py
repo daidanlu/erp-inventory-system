@@ -2,6 +2,7 @@ from rest_framework import viewsets
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from django.utils import timezone
 from django.db.models import Sum
 
@@ -26,6 +27,28 @@ class ProductViewSet(viewsets.ModelViewSet):
     # sort: ?ordering=stock or ?ordering=-stock
     ordering_fields = ["id", "sku", "name", "stock"]
     ordering = ["sku"]
+
+    @action(detail=False, methods=["GET"])
+    def low_stock(self, request):
+        """
+        Return products whose stock is below or equal to a given threshold.
+        Default threshold = 5, can be overridden via ?threshold=10.
+        """
+        try:
+            threshold = int(request.query_params.get("threshold", 5))
+        except ValueError:
+            threshold = 5
+
+        qs = self.get_queryset().filter(stock__lte=threshold)
+
+        # 20 items per page
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(qs, many=True)
+        return Response(serializer.data)
 
 
 class OrderViewSet(viewsets.ModelViewSet):
