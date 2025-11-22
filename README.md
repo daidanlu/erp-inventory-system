@@ -52,9 +52,11 @@ Frontend (React + Ant Design) will consume these APIs but is not covered in this
   - Nested order items with product + quantity
   - API:
     - `POST /api/orders/` creates an order and its items in one request
-  - **Automatic stock deduction**:
-    - When an `OrderItem` is created, it checks stock and deducts from the related `Product`
-    - Raises an error if there is not enough stock
+  - **Automatic stock deduction & transactional safety**:
+    - When an `OrderItem` is created, it checks stock and deducts from the related `Product`.
+    - If there is not enough stock, order creation fails with a validation error and a `400 Bad Request` response.
+    - Order creation is wrapped in a database transaction, so if any item fails (e.g. insufficient stock), no partial orders or stock updates are persisted.
+
 
 - **Dashboard Summary**
   - Aggregated metrics for a simple dashboard:
@@ -230,7 +232,8 @@ Returns products whose `stock <= threshold`, with pagination.
 ```
 
 - When order items are created, stock is deducted in the `OrderItem.save()` method.
-- If requested quantity exceeds available stock, a `ValueError` (mapped to 400) is raised.
+- If requested quantity exceeds available stock, a `ValueError` is raised in the model and converted into a `400 Bad Request` response.
+- The entire order creation runs inside a database transaction, so no partial orders or stock updates are saved when validation fails.
 
 **Filtering / Search / Ordering**
 
@@ -315,6 +318,22 @@ Intended as a backend data source for a React / Ant Design dashboard.
    - Admin: `http://127.0.0.1:8000/admin/`
    - DRF browsable API root: `http://127.0.0.1:8000/api/`
    - DRF login: `http://127.0.0.1:8000/api-auth/login/`
+
+---
+
+## Testing
+
+The `inventory` app includes unit tests for:
+
+- Role-based access control on the product API (anonymous / non-staff / staff users).
+- The `/api/products/low_stock/` endpoint behaviour for default and custom thresholds.
+- Order API behaviour when stock is insufficient (returns 400 and rolls back all changes).
+
+Run the tests with:
+
+```bash
+python manage.py test inventory
+```
 
 ---
 

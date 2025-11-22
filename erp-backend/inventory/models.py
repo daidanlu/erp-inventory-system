@@ -48,7 +48,10 @@ class OrderItem(models.Model):
     def save(self, *args, **kwargs):
         if self._state.adding:  # only deduct stock on first creation
             if self.product.stock < self.quantity:
-                raise ValueError("Insufficient stock for product.")
+                raise ValueError(
+                    f"Not enough stock for product {self.product.sku}: "
+                    f"have {self.product.stock}, requested {self.quantity}"
+                )
             self.product.stock -= self.quantity
             self.product.save()
         super().save(*args, **kwargs)

@@ -150,3 +150,51 @@ class LowStockEndpointTests(TestCase):
         skus = sorted([item["sku"] for item in results])
         # check threshold=10, check if containing A, B, C with stock<=10
         self.assertEqual(skus, ["A", "B", "C"])
+
+class OrderApiInsufficientStockTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+
+        # staff user for POST /api/orders/
+        self.staff_user = User.objects.create_user(
+            username="staff2",
+            password="staffpass2",
+            is_staff=True,
+        )
+
+        # product with stock=2
+        self.product = Product.objects.create(
+            sku="P-LOW",
+            name="Low Stock Product",
+            stock=2,
+        )
+
+        self.url = "/api/orders/"
+
+    def test_create_order_with_insufficient_stock_returns_400_and_rolls_back(self):
+        self.client.login(username="staff2", password="staffpass2")
+
+        payload = {
+            "customer_name": "Test Customer",
+            "items": [
+                {"product_id": self.product.id, "quantity": 5}  # >stock
+            ],
+        }
+
+        response = self.client.post(self.url, payload, format="json")
+
+        # should return 400 instead of 500
+        self.assertEqual(response.status_code, 400)
+
+        # error message with json detail
+        self.assertIn("detail", response.data)
+        self.assertIn("Not enough stock", response.data["detail"])
+
+        # should not create any orders to check rollback
+        self.assertEqual(Order.objects.count(), 0)
+        self.assertEqual(OrderItem.objects.count(), 0)
+
+        # should not deduct stock
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 2)

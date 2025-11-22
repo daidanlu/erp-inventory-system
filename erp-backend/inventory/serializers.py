@@ -1,3 +1,4 @@
+from django.db import transaction
 from rest_framework import serializers
 from .models import Product, Order, OrderItem, Customer
 
@@ -52,7 +53,15 @@ class OrderSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
-        order = Order.objects.create(**validated_data)
-        for item_data in items_data:
-            OrderItem.objects.create(order=order, **item_data)
+        # atomic step, complete transaction rollback
+        try:
+            with transaction.atomic():
+                order = Order.objects.create(**validated_data)
+                for item_data in items_data:
+                    # if insufficient, OrderItem.save() throws ValueError
+                    OrderItem.objects.create(order=order, **item_data)
+        except ValueError as e:
+            # get ValueError transferred to DRF standard 400 Bad Request
+            raise serializers.ValidationError({"detail": str(e)})
+
         return order
