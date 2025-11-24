@@ -151,6 +151,7 @@ class LowStockEndpointTests(TestCase):
         # check threshold=10, check if containing A, B, C with stock<=10
         self.assertEqual(skus, ["A", "B", "C"])
 
+
 class OrderApiInsufficientStockTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -177,9 +178,7 @@ class OrderApiInsufficientStockTests(TestCase):
 
         payload = {
             "customer_name": "Test Customer",
-            "items": [
-                {"product_id": self.product.id, "quantity": 5}  # >stock
-            ],
+            "items": [{"product_id": self.product.id, "quantity": 5}],  # >stock
         }
 
         response = self.client.post(self.url, payload, format="json")
@@ -198,3 +197,60 @@ class OrderApiInsufficientStockTests(TestCase):
         # should not deduct stock
         self.product.refresh_from_db()
         self.assertEqual(self.product.stock, 2)
+
+
+class CustomerOrdersEndpointTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        # create 2 customers
+        self.c1 = Customer.objects.create(
+            name="customer_1",
+            email="customer_1@daedalus.com",
+            phone="123",
+            address="Address 1",
+        )
+        self.c2 = Customer.objects.create(
+            name="customer_2",
+            email="customer_2@daedalus.com",
+            phone="456",
+            address="Address 2",
+        )
+
+        self.product = Product.objects.create(
+            sku="P001",
+            name="Test Product",
+            stock=100,
+        )
+
+        # c1: 2 orders, c2: 1 order
+        self.o1 = Order.objects.create(customer=self.c1, customer_name="customer_1")
+        self.o2 = Order.objects.create(customer=self.c1, customer_name="customer_1")
+        self.o3 = Order.objects.create(customer=self.c2, customer_name="customer_2")
+
+        # add some order items
+        OrderItem.objects.create(order=self.o1, product=self.product, quantity=1)
+        OrderItem.objects.create(order=self.o2, product=self.product, quantity=2)
+        OrderItem.objects.create(order=self.o3, product=self.product, quantity=3)
+
+        self.url_c1 = f"/api/customers/{self.c1.id}/orders/"
+        self.url_c2 = f"/api/customers/{self.c2.id}/orders/"
+
+    def test_customer_orders_returns_only_this_customers_orders(self):
+        response = self.client.get(self.url_c1)
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        results = data.get("results", data)
+
+        ids = sorted([item["id"] for item in results])
+        self.assertEqual(ids, sorted([self.o1.id, self.o2.id]))
+
+        response2 = self.client.get(self.url_c2)
+        self.assertEqual(response2.status_code, 200)
+
+        data2 = response2.json()
+        results2 = data2.get("results", data2)
+
+        ids2 = sorted([item["id"] for item in results2])
+        self.assertEqual(ids2, [self.o3.id])

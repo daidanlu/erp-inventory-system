@@ -174,6 +174,8 @@ Returns products whose `stock <= threshold`, with pagination.
 - Ordering:
   - `?ordering=name`, `?ordering=-id`
 - Paginated response
+- Per-customer order history:
+  - `GET /api/customers/{id}/orders/` – returns the paginated list of orders for a given customer, ordered by newest first.
 
 ---
 

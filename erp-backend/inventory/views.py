@@ -1,13 +1,17 @@
 from rest_framework import viewsets
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils import timezone
 from django.db.models import Sum
 
-from .models import Product, Order, Customer
-from .serializers import ProductSerializer, OrderSerializer, CustomerSerializer
+from .models import Product, Order, Customer, OrderItem
+from .serializers import (
+    ProductSerializer,
+    CustomerSerializer,
+    OrderSerializer,
+)
 from .permissions import IsStaffOrReadOnly
 
 
@@ -75,6 +79,22 @@ class CustomerViewSet(viewsets.ModelViewSet):
     search_fields = ["name", "email", "phone"]
     ordering_fields = ["id", "name"]
     ordering = ["name"]
+
+    @action(detail=True, methods=["GET"])
+    def orders(self, request, pk=None):
+        """
+        Return paginated orders for this customer, ordered by newest first.
+        """
+        customer = self.get_object()
+        qs = Order.objects.filter(customer=customer).order_by("-created_at")
+
+        page = self.paginate_queryset(qs)
+        if page is not None:
+            serializer = OrderSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = OrderSerializer(qs, many=True)
+        return Response(serializer.data)
 
 
 @api_view(["GET"])
