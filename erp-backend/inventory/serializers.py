@@ -45,6 +45,7 @@ class OrderSerializer(serializers.ModelSerializer):
             "id",
             "customer_name",
             "created_at",
+            "status",
             "customer",
             "customer_id",
             "items",

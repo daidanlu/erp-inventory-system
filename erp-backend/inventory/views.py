@@ -60,7 +60,12 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [IsStaffOrReadOnly]
 
-    filterset_fields = ["customer", "customer_name", "created_at"]
+    filterset_fields = {
+        "customer": ["exact"],
+        "customer_name": ["exact", "icontains"],
+        "created_at": ["date__gte", "date__lte"],
+        "status": ["exact"],
+    }
 
     search_fields = ["customer_name", "customer__name"]
     ordering_fields = ["id", "created_at"]

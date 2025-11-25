@@ -26,6 +26,16 @@ class Product(models.Model):
 
 
 class Order(models.Model):
+    STATUS_DRAFT = "draft"
+    STATUS_CONFIRMED = "confirmed"
+    STATUS_CANCELLED = "cancelled"
+
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_CONFIRMED, "Confirmed"),
+        (STATUS_CANCELLED, "Cancelled"),
+    ]
+
     customer_name = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
     customer = models.ForeignKey(
@@ -36,8 +46,15 @@ class Order(models.Model):
         related_name="orders",
     )
 
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_CONFIRMED,
+    )
+
     def __str__(self):
         return f"Order #{self.id} by {self.customer_name} at {self.created_at.strftime('%Y-%m-%d')}"
+
 
 
 class OrderItem(models.Model):

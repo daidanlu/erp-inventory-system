@@ -254,3 +254,43 @@ class CustomerOrdersEndpointTests(TestCase):
 
         ids2 = sorted([item["id"] for item in results2])
         self.assertEqual(ids2, [self.o3.id])
+
+class OrderStatusTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.customer = Customer.objects.create(
+            name="Status Customer",
+            email="status@daedalus.com",
+            phone="123",
+            address="Address",
+        )
+
+    def test_order_default_status_is_confirmed(self):
+        order = Order.objects.create(
+            customer=self.customer,
+            customer_name="Status Customer",
+        )
+        self.assertEqual(order.status, Order.STATUS_CONFIRMED)
+
+    def test_filter_orders_by_status(self):
+        o1 = Order.objects.create(
+            customer=self.customer,
+            customer_name="Status Customer",
+            status=Order.STATUS_DRAFT,
+        )
+        o2 = Order.objects.create(
+            customer=self.customer,
+            customer_name="Status Customer",
+            status=Order.STATUS_CANCELLED,
+        )
+
+        url = "/api/orders/?status=draft"
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        results = data.get("results", data)
+
+        ids = [item["id"] for item in results]
+        self.assertIn(o1.id, ids)
+        self.assertNotIn(o2.id, ids)
