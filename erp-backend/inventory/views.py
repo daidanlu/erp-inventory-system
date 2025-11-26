@@ -5,6 +5,8 @@ from rest_framework.response import Response
 from rest_framework.decorators import action
 from django.utils import timezone
 from django.db.models import Sum
+from datetime import timedelta
+
 
 from .models import Product, Order, Customer, OrderItem
 from .serializers import (
@@ -108,19 +110,35 @@ def dashboard_summary(request):
     """
     Simple dashboard summary for the ERP:
     counts for products/customers/orders and some basic inventory stats.
+    Now also includes status-aware order metrics.
     """
     now = timezone.now()
-    last_30_days = now - timezone.timedelta(days=30)
+    last_30_days = now - timedelta(days=30)
 
     products_count = Product.objects.count()
     customers_count = Customer.objects.count()
     orders_total_count = Order.objects.count()
-    orders_last_30_days = Order.objects.filter(created_at__gte=last_30_days).count()
+
+    # only calculate orders confirmed
+    orders_last_30_days = Order.objects.filter(
+        created_at__gte=last_30_days,
+        status=Order.STATUS_CONFIRMED,
+    ).count()
 
     total_stock = (
         Product.objects.aggregate(total_stock=Sum("stock"))["total_stock"] or 0
     )
     low_stock_count = Product.objects.filter(stock__lte=5).count()
+
+    orders_by_status = {
+        Order.STATUS_DRAFT: Order.objects.filter(status=Order.STATUS_DRAFT).count(),
+        Order.STATUS_CONFIRMED: Order.objects.filter(
+            status=Order.STATUS_CONFIRMED
+        ).count(),
+        Order.STATUS_CANCELLED: Order.objects.filter(
+            status=Order.STATUS_CANCELLED
+        ).count(),
+    }
 
     data = {
         "products_count": products_count,
@@ -129,5 +147,6 @@ def dashboard_summary(request):
         "orders_last_30_days": orders_last_30_days,
         "total_stock": total_stock,
         "low_stock_count": low_stock_count,
+        "orders_by_status": orders_by_status,
     }
     return Response(data)

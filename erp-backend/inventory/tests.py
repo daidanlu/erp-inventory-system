@@ -1,6 +1,8 @@
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
+from datetime import timedelta
+from django.utils import timezone
 
 from .models import Product, Order, OrderItem, Customer
 
@@ -255,6 +257,7 @@ class CustomerOrdersEndpointTests(TestCase):
         ids2 = sorted([item["id"] for item in results2])
         self.assertEqual(ids2, [self.o3.id])
 
+
 class OrderStatusTests(TestCase):
     def setUp(self):
         self.client = APIClient()
@@ -294,3 +297,67 @@ class OrderStatusTests(TestCase):
         ids = [item["id"] for item in results]
         self.assertIn(o1.id, ids)
         self.assertNotIn(o2.id, ids)
+
+
+class DashboardSummaryTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+
+        self.product = Product.objects.create(
+            sku="DASH-P1",
+            name="Dash Product",
+            stock=10,
+        )
+        self.customer = Customer.objects.create(
+            name="Dash Customer",
+            email="dash@daedalus.com",
+            phone="123",
+            address="Dash Address",
+        )
+
+        now = timezone.now()
+        thirty_one_days_ago = now - timedelta(days=31)
+        ten_days_ago = now - timedelta(days=10)
+
+        # order 1: confirmed, 10 days ago
+        self.o1 = Order.objects.create(
+            customer=self.customer,
+            customer_name="Dash Customer",
+            status=Order.STATUS_CONFIRMED,
+            created_at=ten_days_ago,
+        )
+
+        # order 2: draft, 10 days ago
+        self.o2 = Order.objects.create(
+            customer=self.customer,
+            customer_name="Dash Customer",
+            status=Order.STATUS_DRAFT,
+            created_at=ten_days_ago,
+        )
+
+        # order 3: cancelled, 31 days ago, outdated
+        self.o3 = Order.objects.create(
+            customer=self.customer,
+            customer_name="Dash Customer",
+            status=Order.STATUS_CANCELLED,
+            created_at=thirty_one_days_ago,
+        )
+
+    def test_dashboard_counts_and_orders_by_status(self):
+        response = self.client.get("/api/dashboard/")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+
+        self.assertEqual(data["products_count"], 1)
+        self.assertEqual(data["customers_count"], 1)
+        self.assertEqual(data["orders_total_count"], 3)
+
+        # only contains o1
+        self.assertEqual(data["orders_last_30_days"], 1)
+
+        # order by status
+        by_status = data["orders_by_status"]
+        self.assertEqual(by_status[Order.STATUS_DRAFT], 1)
+        self.assertEqual(by_status[Order.STATUS_CONFIRMED], 1)
+        self.assertEqual(by_status[Order.STATUS_CANCELLED], 1)

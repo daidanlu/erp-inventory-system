@@ -264,11 +264,18 @@ Returns aggregated metrics:
   "orders_total_count": 42,
   "orders_last_30_days": 10,
   "total_stock": 378,
-  "low_stock_count": 3
+  "low_stock_count": 3,
+  "orders_by_status": {
+    "draft": 3,
+    "confirmed": 35,
+    "cancelled": 4
+  }
 }
 ```
 
 Intended as a backend data source for a React / Ant Design dashboard.
+- `orders_last_30_days` only counts confirmed orders.
+- `orders_by_status` groups all orders by their status (draft/confirmed/cancelled).
 
 ---
 
