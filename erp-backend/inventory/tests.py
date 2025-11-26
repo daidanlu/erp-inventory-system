@@ -361,3 +361,55 @@ class DashboardSummaryTests(TestCase):
         self.assertEqual(by_status[Order.STATUS_DRAFT], 1)
         self.assertEqual(by_status[Order.STATUS_CONFIRMED], 1)
         self.assertEqual(by_status[Order.STATUS_CANCELLED], 1)
+
+
+class BulkAdjustStockTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+
+        # staff user
+        self.staff = User.objects.create_user(
+            username="stockstaff",
+            password="stockpass",
+            is_staff=True,
+        )
+
+        # 2 products
+        self.p1 = Product.objects.create(sku="BULK-1", name="Bulk 1", stock=10)
+        self.p2 = Product.objects.create(sku="BULK-2", name="Bulk 2", stock=5)
+
+        self.url = "/api/products/bulk_adjust_stock/"
+
+    def test_bulk_adjust_stock_success(self):
+        self.client.login(username="stockstaff", password="stockpass")
+
+        payload = [
+            {"product_id": self.p1.id, "delta": 5},  # 10 -> 15
+            {"product_id": self.p2.id, "delta": -2},  #  5 -> 3
+        ]
+
+        response = self.client.post(self.url, payload, format="json")
+        self.assertEqual(response.status_code, 200)
+
+        self.p1.refresh_from_db()
+        self.p2.refresh_from_db()
+        self.assertEqual(self.p1.stock, 15)
+        self.assertEqual(self.p2.stock, 3)
+
+    def test_bulk_adjust_stock_rollback_on_negative(self):
+        self.client.login(username="stockstaff", password="stockpass")
+
+        payload = [
+            {"product_id": self.p1.id, "delta": -100},
+            {"product_id": self.p2.id, "delta": 10},
+        ]
+
+        response = self.client.post(self.url, payload, format="json")
+        self.assertEqual(response.status_code, 400)
+
+        # stock should not be changed for overall operation
+        self.p1.refresh_from_db()
+        self.p2.refresh_from_db()
+        self.assertEqual(self.p1.stock, 10)
+        self.assertEqual(self.p2.stock, 5)

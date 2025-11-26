@@ -1,8 +1,9 @@
-from rest_framework import viewsets
+from django.db import transaction
+from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticatedOrReadOnly
 from rest_framework.response import Response
-from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from django.utils import timezone
 from django.db.models import Sum
 from datetime import timedelta
@@ -13,6 +14,7 @@ from .serializers import (
     ProductSerializer,
     CustomerSerializer,
     OrderSerializer,
+    ProductStockAdjustmentSerializer,
 )
 from .permissions import IsStaffOrReadOnly
 
@@ -55,6 +57,55 @@ class ProductViewSet(viewsets.ModelViewSet):
 
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["POST"], permission_classes=[IsStaffOrReadOnly])
+    def bulk_adjust_stock(self, request):
+        """
+        Adjust stock levels for multiple products in a single, transactional request.
+
+        Expected payload:
+        [
+          { "product_id": 1, "delta": 10 },
+          { "product_id": 2, "delta": -3 }
+        ]
+        """
+        serializer = ProductStockAdjustmentSerializer(data=request.data, many=True)
+        serializer.is_valid(raise_exception=True)
+        items = serializer.validated_data
+
+        if not items:
+            raise ValidationError("No stock adjustments provided.")
+
+        product_ids = [item["product_id"] for item in items]
+
+        # use select_for_update for lock to prevent concurrency issues
+        products_qs = Product.objects.select_for_update().filter(id__in=product_ids)
+        products_by_id = {p.id: p for p in products_qs}
+
+        if len(products_by_id) != len(set(product_ids)):
+            raise ValidationError("One or more products do not exist.")
+
+        with transaction.atomic():
+            # check validity of all changes(deltas)
+            for item in items:
+                product = products_by_id[item["product_id"]]
+                new_stock = product.stock + item["delta"]
+                if new_stock < 0:
+                    raise ValidationError(
+                        f"Stock for product {product.sku} would become negative "
+                        f"({product.stock} + {item['delta']})."
+                    )
+
+            # apply changes
+            for item in items:
+                product = products_by_id[item["product_id"]]
+                product.stock = product.stock + item["delta"]
+                product.save()
+
+        # return updated data
+        updated_products = Product.objects.filter(id__in=product_ids).order_by("id")
+        response_data = ProductSerializer(updated_products, many=True).data
+        return Response(response_data, status=status.HTTP_200_OK)
 
 
 class OrderViewSet(viewsets.ModelViewSet):

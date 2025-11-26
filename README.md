@@ -144,12 +144,24 @@ Implementation details:
   - `?page=2`
   - Page size is controlled by `REST_FRAMEWORK["PAGE_SIZE"]` (currently 20).
 
-**Low-stock helper**
+- **Low-stock helper**
 
-- `GET /api/products/low_stock/`  
-- Optional: `?threshold=5` (default 5)
+  - `GET /api/products/low_stock/`  
+  - Optional: `?threshold=5` (default 5)
+  - Returns products whose `stock <= threshold`, with pagination.
 
-Returns products whose `stock <= threshold`, with pagination.
+- **Bulk stock adjustment**
+
+  - `POST /api/products/bulk_adjust_stock/` *(staff only)*
+  - Request body:
+    ```json
+    [
+      { "product_id": 1, "delta": 10 },
+      { "product_id": 2, "delta": -3 }
+    ]
+    ```
+  - The operation is wrapped in a database transaction. If any adjustment would make stock negative or references a missing product, the API returns `400 Bad Request` and no changes are persisted.
+
 
 ---
 

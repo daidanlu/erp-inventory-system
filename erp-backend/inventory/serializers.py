@@ -9,6 +9,12 @@ class ProductSerializer(serializers.ModelSerializer):
         fields = "__all__"
 
 
+class ProductStockAdjustmentSerializer(serializers.Serializer):
+    product_id = serializers.IntegerField()
+    # +: in, -: out
+    delta = serializers.IntegerField()
+
+
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
         model = Customer
