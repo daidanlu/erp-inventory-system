@@ -1,3 +1,6 @@
+import csv
+from django.http import HttpResponse
+from rest_framework.decorators import action
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action
@@ -107,6 +110,24 @@ class ProductViewSet(viewsets.ModelViewSet):
         response_data = ProductSerializer(updated_products, many=True).data
         return Response(response_data, status=status.HTTP_200_OK)
 
+    @action(detail=False, methods=["GET"], permission_classes=[IsStaffOrReadOnly])
+    def export(self, request):
+        """
+        Export all products as CSV (staff only).
+        """
+        # create HttpResponse
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="products.csv"'
+
+        writer = csv.writer(response)
+        # header of the csv
+        writer.writerow(["id", "sku", "name", "stock"])
+
+        for p in Product.objects.all().order_by("id"):
+            writer.writerow([p.id, p.sku, p.name, p.stock])
+
+        return response
+
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
@@ -123,6 +144,32 @@ class OrderViewSet(viewsets.ModelViewSet):
     search_fields = ["customer_name", "customer__name"]
     ordering_fields = ["id", "created_at"]
     ordering = ["-created_at"]
+
+    @action(detail=False, methods=["GET"], permission_classes=[IsStaffOrReadOnly])
+    def export(self, request):
+        """
+        Export orders as CSV (staff only).
+        Only includes high-level fields for now.
+        """
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = 'attachment; filename="orders.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(["id", "customer_name", "customer_id", "status", "created_at"])
+
+        qs = self.filter_queryset(self.get_queryset()).order_by("id")
+        for o in qs:
+            writer.writerow(
+                [
+                    o.id,
+                    o.customer_name,
+                    o.customer.id if o.customer else "",
+                    o.status,
+                    o.created_at.isoformat(),
+                ]
+            )
+
+        return response
 
 
 class CustomerViewSet(viewsets.ModelViewSet):

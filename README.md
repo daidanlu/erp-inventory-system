@@ -162,6 +162,11 @@ Implementation details:
     ```
   - The operation is wrapped in a database transaction. If any adjustment would make stock negative or references a missing product, the API returns `400 Bad Request` and no changes are persisted.
 
+- **Export**
+
+  - `GET /api/orders/export/` *(staff only)* – exports orders as CSV, including `id`, `customer_name`, `customer_id`, `status` and `created_at`. Supports the same filters as `/api/orders/`.
+
+
 
 ---
 
@@ -260,6 +265,11 @@ Implementation details:
 - Ordering:
   - `?ordering=created_at`
   - `?ordering=-created_at`
+
+**Export**
+
+- `GET /api/orders/export/` *(staff only)* – exports orders as CSV, including `id`, `customer_name`, `customer_id`, `status` and `created_at`. Supports the same filters as `/api/orders/`.
+
 
 ---
 

@@ -1,3 +1,4 @@
+import csv
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -116,6 +117,38 @@ class ProductApiPermissionTests(TestCase):
         )
         self.assertEqual(response.status_code, 201)
         self.assertTrue(Product.objects.filter(sku="P004").exists())
+
+
+class ProductExportTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+
+        self.staff = User.objects.create_user(
+            username="exportstaff",
+            password="exportpass",
+            is_staff=True,
+        )
+
+        Product.objects.create(sku="EXP-1", name="Export 1", stock=10)
+        Product.objects.create(sku="EXP-2", name="Export 2", stock=5)
+
+        self.url = "/api/products/export/"
+
+    def test_product_export_csv_as_staff(self):
+        self.client.login(username="exportstaff", password="exportpass")
+
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+
+        content = response.content.decode("utf-8")
+        lines = [line for line in content.splitlines() if line.strip()]
+
+        # header of the table
+        self.assertIn("sku", lines[0])
+        # at least 2 data rows
+        self.assertGreaterEqual(len(lines), 3)
 
 
 class LowStockEndpointTests(TestCase):
