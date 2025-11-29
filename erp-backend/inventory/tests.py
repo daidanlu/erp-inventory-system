@@ -2,10 +2,11 @@ import csv
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
+from rest_framework import status
 from datetime import timedelta
 from django.utils import timezone
 
-from .models import Product, Order, OrderItem, Customer
+from .models import Product, Order, OrderItem, Customer, StockMovement
 
 
 class OrderStockTests(TestCase):
@@ -446,3 +447,66 @@ class BulkAdjustStockTests(TestCase):
         self.p2.refresh_from_db()
         self.assertEqual(self.p1.stock, 10)
         self.assertEqual(self.p2.stock, 5)
+
+
+class StockMovementTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+        self.staff = User.objects.create_user(
+            username="movestaff",
+            password="movepass",
+            is_staff=True,
+        )
+        self.product = Product.objects.create(sku="MOV-1", name="Move 1", stock=10)
+        self.customer = Customer.objects.create(
+            name="Move Customer",
+            email="move@daedalus.com",
+            phone="123",
+            address="Address",
+        )
+
+    def test_order_creation_creates_stock_movements(self):
+        url = "/api/orders/"
+        payload = {
+            "customer_name": "Move Customer",
+            "items": [
+                {"product_id": self.product.id, "quantity": 2},
+            ],
+        }
+        self.client.login(username="movestaff", password="movepass")
+        response = self.client.post(url, payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 8)  # 10 - 2
+
+        movements = StockMovement.objects.filter(product=self.product)
+        self.assertEqual(movements.count(), 1)
+        m = movements.first()
+        self.assertEqual(m.previous_stock, 10)
+        self.assertEqual(m.delta, -2)
+        self.assertEqual(m.new_stock, 8)
+        self.assertEqual(m.reason, StockMovement.REASON_ORDER)
+
+    def test_bulk_adjust_creates_stock_movements(self):
+        User = get_user_model()
+        staff = User.objects.create_user(
+            username="bulkstaff",
+            password="bulkpass",
+            is_staff=True,
+        )
+        self.client.login(username="bulkstaff", password="bulkpass")
+
+        url = "/api/products/bulk_adjust_stock/"
+        payload = [
+            {"product_id": self.product.id, "delta": 5},  # 10 -> 15
+        ]
+        response = self.client.post(url, payload, format="json")
+        self.assertEqual(response.status_code, 200)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 15)
+
+        movements = StockMovement.objects.filter(product=self.product)
+        self.assertTrue(movements.exists())

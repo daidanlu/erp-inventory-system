@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Product, Order, OrderItem, Customer
+from .models import Product, Order, OrderItem, Customer, StockMovement
 
 
 @admin.register(Product)
@@ -26,3 +26,19 @@ class OrderAdmin(admin.ModelAdmin):
 class OrderItemAdmin(admin.ModelAdmin):
     list_display = ("order", "product", "quantity")
     search_fields = ("order__id", "product__sku", "product__name")
+
+
+@admin.register(StockMovement)
+class StockMovementAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "product",
+        "order",
+        "previous_stock",
+        "delta",
+        "new_stock",
+        "reason",
+        "created_at",
+    )
+    list_filter = ("reason", "created_at", "product")
+    search_fields = ("product__sku", "product__name", "order__id")

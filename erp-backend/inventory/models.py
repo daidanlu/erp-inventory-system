@@ -20,7 +20,7 @@ class Product(models.Model):
 
     class Meta:
         ordering = ["sku"]
-        
+
     def __str__(self):
         return f"{self.name} ({self.sku})"
 
@@ -56,7 +56,6 @@ class Order(models.Model):
         return f"Order #{self.id} by {self.customer_name} at {self.created_at.strftime('%Y-%m-%d')}"
 
 
-
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
@@ -75,3 +74,32 @@ class OrderItem(models.Model):
             self.product.stock -= self.quantity
             self.product.save()
         super().save(*args, **kwargs)
+
+
+class StockMovement(models.Model):
+    REASON_ORDER = "order"
+    REASON_MANUAL = "manual_adjustment"
+
+    REASON_CHOICES = [
+        (REASON_ORDER, "Order"),
+        (REASON_MANUAL, "Manual adjustment"),
+    ]
+
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name="stock_movements"
+    )
+    order = models.ForeignKey(
+        Order,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="stock_movements",
+    )
+    previous_stock = models.IntegerField()
+    delta = models.IntegerField()
+    new_stock = models.IntegerField()
+    reason = models.CharField(max_length=32, choices=REASON_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.product.sku}: {self.previous_stock} -> {self.new_stock} ({self.reason})"

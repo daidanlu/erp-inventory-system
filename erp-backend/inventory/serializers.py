@@ -1,6 +1,6 @@
 from django.db import transaction
 from rest_framework import serializers
-from .models import Product, Order, OrderItem, Customer
+from .models import Product, Order, OrderItem, Customer, StockMovement
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -32,6 +32,24 @@ class OrderItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrderItem
         fields = ["product", "product_id", "quantity"]
+
+
+class StockMovementSerializer(serializers.ModelSerializer):
+    product = ProductSerializer(read_only=True)
+
+    class Meta:
+        model = StockMovement
+        fields = [
+            "id",
+            "product",
+            "order",
+            "previous_stock",
+            "delta",
+            "new_stock",
+            "reason",
+            "created_at",
+        ]
+        read_only_fields = fields
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -66,7 +84,26 @@ class OrderSerializer(serializers.ModelSerializer):
                 order = Order.objects.create(**validated_data)
                 for item_data in items_data:
                     # if insufficient, OrderItem.save() throws ValueError
-                    OrderItem.objects.create(order=order, **item_data)
+                    item = OrderItem.objects.create(order=order, **item_data)
+
+                    # record stock movements
+                    product = item.product
+                    quantity = item.quantity
+
+                    # product.stock after changes
+                    new_stock = product.stock
+                    previous_stock = (
+                        new_stock + quantity
+                    )
+
+                    StockMovement.objects.create(
+                        product=product,
+                        order=order,
+                        previous_stock=previous_stock,
+                        delta=-quantity,
+                        new_stock=new_stock,
+                        reason=StockMovement.REASON_ORDER,
+                    )
         except ValueError as e:
             # get ValueError transferred to DRF standard 400 Bad Request
             raise serializers.ValidationError({"detail": str(e)})

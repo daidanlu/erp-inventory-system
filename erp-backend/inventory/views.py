@@ -12,12 +12,14 @@ from django.db.models import Sum
 from datetime import timedelta
 
 
-from .models import Product, Order, Customer, OrderItem
+from .models import Product, Order, Customer, OrderItem, StockMovement
 from .serializers import (
     ProductSerializer,
     CustomerSerializer,
     OrderSerializer,
+    OrderItemSerializer,
     ProductStockAdjustmentSerializer,
+    StockMovementSerializer,
 )
 from .permissions import IsStaffOrReadOnly
 
@@ -102,8 +104,21 @@ class ProductViewSet(viewsets.ModelViewSet):
             # apply changes
             for item in items:
                 product = products_by_id[item["product_id"]]
-                product.stock = product.stock + item["delta"]
+                previous_stock = product.stock
+                delta = item["delta"]
+                new_stock = previous_stock + delta
+
+                product.stock = new_stock
                 product.save()
+
+                StockMovement.objects.create(
+                    product=product,
+                    order=None,
+                    previous_stock=previous_stock,
+                    delta=delta,
+                    new_stock=new_stock,
+                    reason=StockMovement.REASON_MANUAL,
+                )
 
         # return updated data
         updated_products = Product.objects.filter(id__in=product_ids).order_by("id")
@@ -170,6 +185,22 @@ class OrderViewSet(viewsets.ModelViewSet):
             )
 
         return response
+
+
+class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = StockMovement.objects.select_related("product", "order")
+    serializer_class = StockMovementSerializer
+    permission_classes = [IsStaffOrReadOnly]
+
+    filterset_fields = {
+        "product": ["exact"],
+        "order": ["exact"],
+        "reason": ["exact"],
+        "created_at": ["date__gte", "date__lte"],
+    }
+    search_fields = ["product__sku", "product__name"]
+    ordering_fields = ["created_at", "id"]
+    ordering = ["-created_at"]
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
