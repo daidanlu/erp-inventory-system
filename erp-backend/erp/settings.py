@@ -39,6 +39,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "drf_spectacular",
     "inventory",
     "django_filters",
 ]
@@ -54,6 +55,7 @@ MIDDLEWARE = [
 ]
 
 REST_FRAMEWORK = {
+    "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticatedOrReadOnly",
     ],
@@ -110,6 +112,12 @@ DATABASES = {
         "HOST": config("DB_HOST", default=""),
         "PORT": config("DB_PORT", default=""),
     }
+}
+
+SPECTACULAR_SETTINGS = {
+    "TITLE": "ERP Inventory API",
+    "DESCRIPTION": "Prototype ERP backend for products, orders, inventory and stock movements.",
+    "VERSION": "1.0.0",
 }
 
 
