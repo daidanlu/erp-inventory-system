@@ -103,3 +103,23 @@ class StockMovement(models.Model):
 
     def __str__(self):
         return f"{self.product.sku}: {self.previous_stock} -> {self.new_stock} ({self.reason})"
+
+
+class ChatMessage(models.Model):
+    ROLE_USER = "user"
+    ROLE_BOT = "bot"
+    ROLE_CHOICES = [
+        (ROLE_USER, "User"),
+        (ROLE_BOT, "Bot"),
+    ]
+
+    session_id = models.CharField(max_length=64, db_index=True)
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES)
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"[{self.session_id}] {self.role}: {self.content[:40]}"

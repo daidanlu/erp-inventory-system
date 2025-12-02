@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Product, Order, OrderItem, Customer, StockMovement
+from .models import Product, Order, OrderItem, Customer, StockMovement, ChatMessage
 
 
 @admin.register(Product)
@@ -42,3 +42,15 @@ class StockMovementAdmin(admin.ModelAdmin):
     )
     list_filter = ("reason", "created_at", "product")
     search_fields = ("product__sku", "product__name", "order__id")
+
+
+@admin.register(ChatMessage)
+class ChatMessageAdmin(admin.ModelAdmin):
+    list_display = ("session_id", "role", "short_content", "created_at")
+    list_filter = ("role", "created_at")
+    search_fields = ("session_id", "content")
+
+    def short_content(self, obj):
+        return (obj.content[:40] + "…") if len(obj.content) > 40 else obj.content
+
+    short_content.short_description = "content"

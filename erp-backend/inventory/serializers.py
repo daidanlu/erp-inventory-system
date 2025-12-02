@@ -1,6 +1,6 @@
 from django.db import transaction
 from rest_framework import serializers
-from .models import Product, Order, OrderItem, Customer, StockMovement
+from .models import Product, Order, OrderItem, Customer, StockMovement, ChatMessage
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -92,9 +92,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
                     # product.stock after changes
                     new_stock = product.stock
-                    previous_stock = (
-                        new_stock + quantity
-                    )
+                    previous_stock = new_stock + quantity
 
                     StockMovement.objects.create(
                         product=product,
@@ -109,3 +107,21 @@ class OrderSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"detail": str(e)})
 
         return order
+
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatMessage
+        fields = ["id", "session_id", "role", "content", "created_at"]
+        read_only_fields = ["id", "role", "created_at"]
+
+
+class ChatRequestSerializer(serializers.Serializer):
+    """
+    Incoming chat payload:
+    - session_id: optional, for continuing an existing conversation
+    - message: required, user input
+    """
+
+    session_id = serializers.CharField(required=False, allow_blank=True)
+    message = serializers.CharField()

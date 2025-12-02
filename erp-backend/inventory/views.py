@@ -1,18 +1,20 @@
 import csv
-from django.http import HttpResponse
-from rest_framework.decorators import action
-from django.db import transaction
-from rest_framework import viewsets, status
-from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.permissions import IsAuthenticatedOrReadOnly
-from rest_framework.response import Response
-from rest_framework.exceptions import ValidationError
-from django.utils import timezone
-from django.db.models import Sum
+import uuid
+
 from datetime import timedelta
 
+from django.http import HttpResponse
+from django.db import transaction
+from django.utils import timezone
+from django.db.models import Sum
 
-from .models import Product, Order, Customer, OrderItem, StockMovement
+from rest_framework import viewsets, status
+from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.permissions import IsAuthenticatedOrReadOnly, AllowAny
+from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
+
+from .models import Product, Order, Customer, OrderItem, StockMovement, ChatMessage
 from .serializers import (
     ProductSerializer,
     CustomerSerializer,
@@ -20,6 +22,8 @@ from .serializers import (
     OrderItemSerializer,
     ProductStockAdjustmentSerializer,
     StockMovementSerializer,
+    ChatMessageSerializer,
+    ChatRequestSerializer,
 )
 from .permissions import IsStaffOrReadOnly
 
@@ -279,3 +283,87 @@ def dashboard_summary(request):
         "orders_by_status": orders_by_status,
     }
     return Response(data)
+
+
+def simple_bot_reply(message: str) -> str:
+    """
+    Placeholder bot logic.
+
+    Later this can call an external Rasa/Botpress endpoint.
+    """
+    text = message.lower()
+    if "stock" in text or "库存" in text:
+        return (
+            "I can help you inspect inventory. "
+            "Try /api/products/ or /api/products/low_stock/."
+        )
+    if "order" in text or "订单" in text:
+        return (
+            "For order details you can use the /api/orders/ endpoint with filters "
+            "such as status or customer."
+        )
+    return (
+        "This is a placeholder ERP chatbot endpoint. The backend is wired and can be "
+        "connected to Rasa/Botpress later."
+    )
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def chat_with_bot(request):
+    """
+    Minimal chat endpoint for the ERP.
+
+    Request body:
+      - session_id (optional, string)
+      - message (required, string)
+
+    Response:
+      - session_id: the conversation id (reused if provided)
+      - reply: bot reply text
+      - history: recent messages in this session
+    """
+    serializer = ChatRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+
+    session_id = serializer.validated_data.get("session_id") or uuid.uuid4().hex
+    message = serializer.validated_data["message"].strip()
+
+    if not message:
+        return Response(
+            {"detail": "Empty message."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # save user message
+    ChatMessage.objects.create(
+        session_id=session_id,
+        role=ChatMessage.ROLE_USER,
+        content=message,
+    )
+
+    # generate bot reply (placeholder logic for now)
+    reply_text = simple_bot_reply(message)
+
+    ChatMessage.objects.create(
+        session_id=session_id,
+        role=ChatMessage.ROLE_BOT,
+        content=reply_text,
+    )
+
+    # return recent history for this session
+    recent_messages = ChatMessage.objects.filter(session_id=session_id).order_by(
+        "-created_at"
+    )[:10]
+    recent_messages = list(recent_messages)[::-1]
+
+    history = ChatMessageSerializer(recent_messages, many=True).data
+
+    return Response(
+        {
+            "session_id": session_id,
+            "reply": reply_text,
+            "history": history,
+        },
+        status=status.HTTP_200_OK,
+    )
