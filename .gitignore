@@ -1,13 +1,19 @@
-# Python
-venv/
-erp-backend/venv/
 __pycache__/
 *.pyc
 
-# Node.js
 node_modules/
 dist/
 
-# Others
 *.log
 .env
+
+erp-backend/.venv/
+erp-backend/db.sqlite3
+erp-backend/requirements-full.txt
+
+erp-frontend/node_modules/
+erp-frontend/dist
+erp-frontend/.env
+erp-frontend/.vite
+
+change_email.sh
