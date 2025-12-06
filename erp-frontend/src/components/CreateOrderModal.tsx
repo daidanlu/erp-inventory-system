@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Select, InputNumber, Button, Space, message, Divider } from 'antd';
 import { MinusCircleOutlined, PlusOutlined } from '@ant-design/icons';
-import request from '@/utils/request'; 
+import axios from 'axios';
 import { createOrder, type CreateOrderPayload } from '../api/orders';
 
 interface CreateOrderModalProps {
@@ -10,13 +10,22 @@ interface CreateOrderModalProps {
   onSuccess: () => void;
 }
 
-interface SimpleCustomer { id: number; name: string; }
-interface SimpleProduct { id: number; name: string; sku: string; stock: number; }
+interface SimpleCustomer {
+  id: number;
+  name: string;
+}
+
+interface SimpleProduct {
+  id: number;
+  name: string;
+  sku: string;
+  stock: number;
+}
 
 const CreateOrderModal: React.FC<CreateOrderModalProps> = ({ open, onClose, onSuccess }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  
+
   // data source for the drop-down menu
   const [customers, setCustomers] = useState<SimpleCustomer[]>([]);
   const [products, setProducts] = useState<SimpleProduct[]>([]);
@@ -26,30 +35,35 @@ const CreateOrderModal: React.FC<CreateOrderModalProps> = ({ open, onClose, onSu
     if (open) {
       const fetchData = async () => {
         try {
-          
           const [custRes, prodRes] = await Promise.all([
-            request.get('/customers/'),
-            request.get('/products/')
+            axios.get('/api/customers/'),
+            axios.get('/api/products/')
           ]);
-          
-          // compatible with pagination format { results: [] } or direct array []
-          setCustomers(Array.isArray(custRes.data) ? custRes.data : custRes.data.results);
-          setProducts(Array.isArray(prodRes.data) ? prodRes.data : prodRes.data.results);
+
+          const custData = Array.isArray(custRes.data) ? custRes.data : custRes.data.results;
+          const prodData = Array.isArray(prodRes.data) ? prodRes.data : prodRes.data.results;
+
+          setCustomers(custData);
+          setProducts(prodData);
         } catch (error) {
           message.error('Failed to load customers or products');
         }
       };
+
       fetchData();
     }
   }, [open]);
 
+  // submit form and create order
   const handleSubmit = async (values: any) => {
     setLoading(true);
     try {
-      // payload compatible with backend
+      const selectedCustomer = customers.find(c => c.id === values.customer_id);
+
       const payload: CreateOrderPayload = {
         customer_id: values.customer_id,
-        items: values.items.map((item: any) => ({
+        customer_name: selectedCustomer?.name ?? 'Walk-in customer',
+        items: (values.items || []).map((item: any) => ({
           product_id: item.product_id,
           quantity: item.quantity
         }))
@@ -61,7 +75,11 @@ const CreateOrderModal: React.FC<CreateOrderModalProps> = ({ open, onClose, onSu
       onSuccess();
       onClose();
     } catch (error: any) {
-      const errorMsg = error.response?.data?.detail || 'Failed to create order';
+      const errorMsg =
+        error?.response?.data?.detail ||
+        (typeof error?.response?.data === 'string'
+          ? error.response.data
+          : 'Failed to create order');
       message.error(errorMsg);
     } finally {
       setLoading(false);
@@ -78,11 +96,10 @@ const CreateOrderModal: React.FC<CreateOrderModalProps> = ({ open, onClose, onSu
       width={600}
     >
       <Form form={form} layout="vertical" onFinish={handleSubmit} initialValues={{ items: [{}] }}>
-        
         {/* 1. Select Customer */}
-        <Form.Item 
-          name="customer_id" 
-          label="Customer" 
+        <Form.Item
+          name="customer_id"
+          label="Customer"
           rules={[{ required: true, message: 'Please select a customer' }]}
         >
           <Select placeholder="Select a customer" showSearch optionFilterProp="label">
@@ -101,7 +118,11 @@ const CreateOrderModal: React.FC<CreateOrderModalProps> = ({ open, onClose, onSu
           {(fields, { add, remove }) => (
             <>
               {fields.map(({ key, name, ...restField }) => (
-                <Space key={key} style={{ display: 'flex', marginBottom: 8 }} align="baseline">
+                <Space
+                  key={key}
+                  style={{ display: 'flex', marginBottom: 8 }}
+                  align="baseline"
+                >
                   {/* Product Selection */}
                   <Form.Item
                     {...restField}
@@ -128,10 +149,13 @@ const CreateOrderModal: React.FC<CreateOrderModalProps> = ({ open, onClose, onSu
                   </Form.Item>
 
                   {/* Delete button */}
-                  <MinusCircleOutlined onClick={() => remove(name)} style={{ color: 'red' }} />
+                  <MinusCircleOutlined
+                    onClick={() => remove(name)}
+                    style={{ color: 'red' }}
+                  />
                 </Space>
               ))}
-              
+
               <Form.Item>
                 <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
                   Add Product

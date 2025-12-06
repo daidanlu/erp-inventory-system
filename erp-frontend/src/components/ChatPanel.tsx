@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Card, List, Input, Button, Spin, Avatar } from "antd";
+import { Card, List, Input, Button, Avatar } from "antd";
 import { UserOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import type { ChatMessage, ChatResponse } from "../types/chat";

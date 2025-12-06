@@ -151,7 +151,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
-    permission_classes = [IsStaffOrReadOnly]
+    permission_classes = [AllowAny]
 
     filterset_fields = {
         "customer": ["exact"],
