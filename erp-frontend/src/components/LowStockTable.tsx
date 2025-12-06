@@ -42,7 +42,7 @@ const LowStockTable: React.FC = () => {
   ];
 
   return (
-    <Card 
+   <Card 
       title="⚠️ Restock Needed (Stock ≤ 5)" 
       variant="borderless" 
       styles={{ body: { padding: 12 } }}

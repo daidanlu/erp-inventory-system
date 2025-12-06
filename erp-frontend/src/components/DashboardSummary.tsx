@@ -41,6 +41,7 @@ const DashboardSummary: React.FC = () => {
     <div style={{ marginBottom: 24 }}>
       <Row gutter={16}>
         <Col span={6}>
+          {/* 修复：bordered -> variant */}
           <Card variant="borderless">
             <Statistic 
               title="Total Products" 
