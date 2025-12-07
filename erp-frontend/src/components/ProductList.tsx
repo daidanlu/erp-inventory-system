@@ -1,8 +1,10 @@
 // src/components/ProductList.tsx
-import React, { useEffect, useState } from 'react'
-import { Table, Tag } from 'antd'
-import type { ColumnsType } from 'antd/es/table'
-import axios from 'axios'
+import React, { useEffect, useState } from 'react';
+import { Table, Tag, Button } from 'antd';
+import type { ColumnsType } from 'antd/es/table';
+import axios from 'axios';
+import ProductStockHistoryDrawer from './ProductStockHistoryDrawer';
+
 
 type Product = {
   id: number
@@ -23,6 +25,14 @@ const ProductList: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+
+  const [historyProductId, setHistoryProductId] = useState<number | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  const handleViewHistory = (productId: number) => {
+    setHistoryProductId(productId);
+    setHistoryOpen(true);
+  };
 
   const fetchProducts = async (pageNum = 1) => {
     setLoading(true)
@@ -82,22 +92,40 @@ const ProductList: React.FC = () => {
         )
       },
     },
+    {
+      title: 'History',
+      key: 'history',
+      width: 120,
+      render: (_value, record) => (
+        <Button type="link" onClick={() => handleViewHistory(record.id)}>
+          View history
+        </Button>
+      ),
+    },
   ]
 
-  return (
-    <Table<Product>
-      rowKey="id"
-      columns={columns}
-      dataSource={data}
-      loading={loading}
-      pagination={{
-        current: page,
-        total,
-        pageSize: 10,
-        onChange: (p) => setPage(p),
-      }}
-    />
-  )
+    return (
+    <>
+      <Table<Product>
+        rowKey="id"
+        columns={columns}
+        dataSource={data}
+        loading={loading}
+        pagination={{
+          current: page,
+          total,
+          pageSize: 10,
+          onChange: (p) => setPage(p),
+        }}
+      />
+
+      <ProductStockHistoryDrawer
+        open={historyOpen}
+        productId={historyProductId}
+        onClose={() => setHistoryOpen(false)}
+      />
+    </>
+  );
 }
 
 export default ProductList
