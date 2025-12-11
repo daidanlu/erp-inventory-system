@@ -6,6 +6,8 @@ import DashboardSummary from './components/DashboardSummary'
 import LowStockTable from './components/LowStockTable'
 import { ChatPanel } from './components/ChatPanel'
 import CreateOrderModal from './components/CreateOrderModal'
+import OrdersPage from './components/OrdersPage'
+
 
 const { Header, Content } = Layout
 
@@ -37,46 +39,51 @@ function App() {
       </Header>
 
 
-      <Content style={{ 
-        padding: '24px', 
-        flex: 1, 
-        overflowY: 'auto',
-        overflowX: 'hidden'
-      }}>
-        
-         {/* 1. dashboard summary on the top: total product, stock, orders, etc, add key={refreshKey} to the component that needs to be refreshed */}
+      <Content
+        style={{
+          padding: '24px',
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+        }}
+      >
+        {/* 1. Dashboard summary */}
         <DashboardSummary key={`dash-${refreshKey}`} />
 
         <Row gutter={24} style={{ marginTop: 24 }}>
-         {/* 2. left: ProductList */}
+          {/* 2. left: ProductList */}
           <Col span={16}>
-             <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
-                <h3>All Products Inventory</h3>
-                <ProductList key={`prod-${refreshKey}`} />
-             </div>
+            <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
+              <h3>All Products Inventory</h3>
+              <ProductList key={`prod-${refreshKey}`} />
+            </div>
           </Col>
-          
-          {/* 3. right: low stock warning & chatbot*/}
+
+          {/* 3. right: Low stock + Chat */}
           <Col span={8} style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-             {/* lowstock alert*/}
-             <div style={{ flex: '0 0 auto' }}>
-                <LowStockTable key={`low-${refreshKey}`} />
-             </div>
-             
-             {/* chatbot window*/}
-             <div style={{ height: 500, background: '#fff', borderRadius: 8, overflow: 'hidden' }}>
-                <ChatPanel />
-             </div>
+            <div style={{ flex: '0 0 auto' }}>
+              <LowStockTable key={`low-${refreshKey}`} />
+            </div>
+            <div style={{ height: 500, background: '#fff', borderRadius: 8, overflow: 'hidden' }}>
+              <ChatPanel />
+            </div>
           </Col>
         </Row>
-        {/* 4. add the pop-up component at the end */ }
-        <CreateOrderModal 
-          open={isModalOpen} 
-          onClose={() => setIsModalOpen(false)} 
-          onSuccess={() => setRefreshKey(k => k + 1)} // upon success, increment key by 1 and trigger a global refresh
-        />
 
+        {/* 4. Orders list section */}
+        <div style={{ marginTop: 24, background: '#fff', padding: 24, borderRadius: 8 }}>
+          <h3>Recent Orders</h3>
+          <OrdersPage key={`orders-${refreshKey}`} />
+        </div>
+
+        {/* 5. New Order modal */}
+        <CreateOrderModal
+          open={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          onSuccess={() => setRefreshKey((k) => k + 1)}
+        />
       </Content>
+
     </Layout>
   )
 }
