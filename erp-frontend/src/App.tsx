@@ -14,6 +14,10 @@ const { Header, Content } = Layout
 function App() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [refreshKey, setRefreshKey] = useState(0) // to force refresh child components
+  const handleExportProducts = () => {
+    window.open('/api/products/export/', '_blank')
+  }
+
   return (
     <Layout style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       
@@ -54,7 +58,20 @@ function App() {
           {/* 2. left: ProductList */}
           <Col span={16}>
             <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
-              <h3>All Products Inventory</h3>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginBottom: 16,
+                }}
+              >
+                <h3 style={{ margin: 0 }}>All Products Inventory</h3>
+                <Button size="small" onClick={handleExportProducts}>
+                  Export CSV
+                </Button>
+              </div>
+
               <ProductList key={`prod-${refreshKey}`} />
             </div>
           </Col>

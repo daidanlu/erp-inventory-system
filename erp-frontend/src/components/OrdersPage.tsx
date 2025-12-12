@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Tag, Select, Space } from 'antd';
+import { Table, Tag, Select, Space, Button } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
 
@@ -49,6 +49,17 @@ const OrdersPage: React.FC = () => {
   useEffect(() => {
     fetchOrders();
   }, [page, statusFilter]);
+
+    const handleExportOrders = () => {
+      const params = new URLSearchParams();
+      if (statusFilter) {
+        params.append('status', statusFilter);
+      }
+      const query = params.toString();
+      const url = `/api/orders/export/${query ? `?${query}` : ''}`;
+
+      window.open(url, '_blank');
+    };
 
 
     const columns: ColumnsType<Order> = [
@@ -109,25 +120,37 @@ const OrdersPage: React.FC = () => {
 
     return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
-        <span>Status:</span>
-        <Select
-        allowClear
-        style={{ width: 160 }}
-        placeholder="All"
-        value={statusFilter}
-        onChange={(value) => {
-          setPage(1);
-          setStatusFilter(value);
-  }}
-  options={[
-    { value: 'draft', label: 'Draft' },
-    { value: 'confirmed', label: 'Confirmed' },
-    { value: 'cancelled', label: 'Cancelled' },
-  ]}
-/>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+        }}
+      >
+        <Space>
+          <span>Status:</span>
+          <Select
+            allowClear
+            style={{ width: 160 }}
+            placeholder="All"
+            value={statusFilter}
+            onChange={(value) => {
+              setPage(1);
+              setStatusFilter(value);
+            }}
+            options={[
+              { value: 'draft', label: 'Draft' },
+              { value: 'confirmed', label: 'Confirmed' },
+              { value: 'cancelled', label: 'Cancelled' },
+            ]}
+          />
+        </Space>
 
-      </Space>
+        <Button size="small" onClick={handleExportOrders}>
+          Export CSV
+        </Button>
+      </div>
 
       <Table<Order>
         rowKey="id"
