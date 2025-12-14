@@ -1,30 +1,32 @@
-// src/components/ProductList.tsx
 import React, { useEffect, useState } from 'react';
 import { Table, Tag, Button } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
 import ProductStockHistoryDrawer from './ProductStockHistoryDrawer';
 
-
 type Product = {
-  id: number
-  sku: string
-  name: string
-  stock: number
-}
+  id: number;
+  sku: string;
+  name: string;
+  stock: number;
+};
 
 type ProductListResponse = {
-  count: number
-  next: string | null
-  previous: string | null
-  results: Product[]
+  count: number;
+  next: string | null;
+  previous: string | null;
+  results: Product[];
+};
+
+interface ProductListProps {
+  onAdjustProduct: (product: Product) => void;
 }
 
-const ProductList: React.FC = () => {
-  const [data, setData] = useState<Product[]>([])
-  const [loading, setLoading] = useState(false)
-  const [page, setPage] = useState(1)
-  const [total, setTotal] = useState(0)
+const ProductList: React.FC<ProductListProps> = ({ onAdjustProduct }) => {
+  const [data, setData] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
 
   const [historyProductId, setHistoryProductId] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -35,29 +37,27 @@ const ProductList: React.FC = () => {
   };
 
   const fetchProducts = async (pageNum = 1) => {
-    setLoading(true)
+    setLoading(true);
     try {
-      const resp = await axios.get<ProductListResponse>(
-        '/api/products/', 
-        { params: { page: pageNum } },
-      )
+      const resp = await axios.get<ProductListResponse>('/api/products/', {
+        params: { page: pageNum },
+      });
 
-      const payload = resp.data as any
+      const payload = resp.data as any;
+      const items: Product[] = payload.results ?? payload;
 
-      const items: Product[] = payload.results ?? payload
-
-      setData(items)
-      setTotal(payload.count ?? items.length)
+      setData(items);
+      setTotal(payload.count ?? items.length);
     } catch (err) {
-      console.error('Failed to load products', err)
+      console.error('Failed to load products', err);
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    fetchProducts(page)
-  }, [page])
+    fetchProducts(page);
+  }, [page]);
 
   const columns: ColumnsType<Product> = [
     {
@@ -84,12 +84,8 @@ const ProductList: React.FC = () => {
       key: 'stock',
       width: 120,
       render: (value: number) => {
-        const isLow = value <= 5
-        return (
-          <Tag color={isLow ? 'red' : 'green'}>
-            {value}
-          </Tag>
-        )
+        const isLow = value <= 5;
+        return <Tag color={isLow ? 'red' : 'green'}>{value}</Tag>;
       },
     },
     {
@@ -102,9 +98,19 @@ const ProductList: React.FC = () => {
         </Button>
       ),
     },
-  ]
+    {
+      title: 'Actions',
+      key: 'actions',
+      width: 140,
+      render: (_value, record) => (
+        <Button type="link" onClick={() => onAdjustProduct(record)}>
+          Adjust stock
+        </Button>
+      ),
+    },
+  ];
 
-    return (
+  return (
     <>
       <Table<Product>
         rowKey="id"
@@ -126,6 +132,6 @@ const ProductList: React.FC = () => {
       />
     </>
   );
-}
+};
 
-export default ProductList
+export default ProductList;
