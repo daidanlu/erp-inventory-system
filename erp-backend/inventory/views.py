@@ -67,7 +67,7 @@ class ProductViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(qs, many=True)
         return Response(serializer.data)
 
-    @action(detail=False, methods=["POST"], permission_classes=[AllowAny])
+    @action(detail=False, methods=["POST"], permission_classes=[IsStaffOrReadOnly])
     def bulk_adjust_stock(self, request):
         """
         Adjust stock levels for multiple products in a single, transactional request.
