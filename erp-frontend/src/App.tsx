@@ -23,15 +23,16 @@ import OrdersPage from './components/OrdersPage';
 import AdjustStockModal, {
   ProductForAdjust,
 } from './components/AdjustStockModal';
+import CustomersPage from './components/CustomersPage'; // 👈 新增
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
 
 /**
-* Global Axios Configuration:
-* - Backend base URL points to 127.0.0.1:8000
-* - Each request automatically includes Authorization: Bearer <accessToken>
-*/
+ * Global Axios Configuration:
+ * - Backend base URL points to 127.0.0.1:8000
+ * - Each request automatically includes Authorization: Bearer <accessToken>
+ */
 axios.defaults.baseURL = 'http://127.0.0.1:8000';
 axios.defaults.withCredentials = false;
 
@@ -44,7 +45,6 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
-
 
 function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -249,14 +249,27 @@ function App() {
           <OrdersPage key={`orders-${refreshKey}`} />
         </div>
 
-        {/* 5. New Order modal */}
+        {/* 5. Customers list section */}
+        <div
+          style={{
+            marginTop: 24,
+            background: '#fff',
+            padding: 24,
+            borderRadius: 8,
+          }}
+        >
+          <h3>Customers</h3>
+          <CustomersPage key={`customers-${refreshKey}`} />
+        </div>
+
+        {/* 6. New Order modal */}
         <CreateOrderModal
           open={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           onSuccess={() => setRefreshKey((k) => k + 1)}
         />
 
-        {/* 6. Adjust stock modal */}
+        {/* 7. Adjust stock modal */}
         <AdjustStockModal
           open={adjustOpen}
           product={selectedProduct}
@@ -264,7 +277,7 @@ function App() {
           onSuccess={() => setRefreshKey((k) => k + 1)}
         />
 
-        {/* 7. Login */}
+        {/* 8. Login */}
         <Modal
           open={loginVisible}
           title="Staff Login"
