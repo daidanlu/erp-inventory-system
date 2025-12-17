@@ -334,6 +334,73 @@ class OrderStatusTests(TestCase):
         self.assertNotIn(o2.id, ids)
 
 
+class OrderCancelEndpointTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        User = get_user_model()
+
+        self.staff = User.objects.create_user(
+            username="cancelstaff",
+            password="cancelpass",
+            is_staff=True,
+        )
+
+        self.product = Product.objects.create(
+            sku="CANCEL-1",
+            name="Cancel Product",
+            stock=10,
+        )
+
+    def test_cancel_order_restocks_and_is_idempotent(self):
+        self.client.login(username="cancelstaff", password="cancelpass")
+
+        # create an order via API so it uses your serializer logic + creates initial StockMovement
+        create_resp = self.client.post(
+            "/api/orders/",
+            {
+                "customer_name": "Cancel Customer",
+                "items": [{"product_id": self.product.id, "quantity": 3}],
+            },
+            format="json",
+        )
+        self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
+        order_id = create_resp.data["id"]
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 7)  # 10 - 3
+
+        cancel_url = f"/api/orders/{order_id}/cancel/"
+
+        # first cancel: restock + write another StockMovement
+        cancel_resp = self.client.post(cancel_url, {}, format="json")
+        self.assertEqual(cancel_resp.status_code, status.HTTP_200_OK)
+
+        order = Order.objects.get(id=order_id)
+        self.assertEqual(order.status, Order.STATUS_CANCELLED)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 10)  # back to 10
+
+        movements = StockMovement.objects.filter(
+            order=order, product=self.product
+        ).order_by("id")
+        self.assertEqual(movements.count(), 2)
+        self.assertEqual([m.delta for m in movements], [-3, 3])
+        self.assertEqual(movements[1].previous_stock, 7)
+        self.assertEqual(movements[1].new_stock, 10)
+
+        # second cancel: idempotent (no additional restock/movement)
+        cancel_resp2 = self.client.post(cancel_url, {}, format="json")
+        self.assertEqual(cancel_resp2.status_code, status.HTTP_200_OK)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 10)
+        self.assertEqual(
+            StockMovement.objects.filter(order=order, product=self.product).count(),
+            2,
+        )
+
+
 class DashboardSummaryTests(TestCase):
     def setUp(self):
         self.client = APIClient()

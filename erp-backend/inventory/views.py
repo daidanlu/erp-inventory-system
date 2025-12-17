@@ -190,6 +190,56 @@ class OrderViewSet(viewsets.ModelViewSet):
 
         return response
 
+    @action(detail=True, methods=["POST"], permission_classes=[IsStaffOrReadOnly])
+    def cancel(self, request, pk=None):
+        """
+        Cancel an order and restock its items.
+
+        Idempotent: cancelling an already-cancelled order will NOT restock again.
+        """
+        with transaction.atomic():
+            order = (
+                Order.objects.select_for_update()
+                .prefetch_related("items__product")
+                .get(pk=pk)
+            )
+
+            # idempotent: already cancelled -> no-op
+            if order.status == Order.STATUS_CANCELLED:
+                return Response(
+                    self.get_serializer(order).data, status=status.HTTP_200_OK
+                )
+
+            item_qs = order.items.all()
+            product_ids = list(item_qs.values_list("product_id", flat=True))
+
+            # lock products to avoid concurrent updates
+            products_qs = Product.objects.select_for_update().filter(id__in=product_ids)
+            products_by_id = {p.id: p for p in products_qs}
+
+            for item in item_qs:
+                product = products_by_id[item.product_id]
+                previous_stock = product.stock
+                delta = item.quantity  # restock
+                new_stock = previous_stock + delta
+
+                product.stock = new_stock
+                product.save(update_fields=["stock"])
+
+                StockMovement.objects.create(
+                    product=product,
+                    order=order,
+                    previous_stock=previous_stock,
+                    delta=delta,
+                    new_stock=new_stock,
+                    reason=StockMovement.REASON_ORDER,
+                )
+
+            order.status = Order.STATUS_CANCELLED
+            order.save(update_fields=["status"])
+
+        return Response(self.get_serializer(order).data, status=status.HTTP_200_OK)
+
 
 class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = StockMovement.objects.select_related("product", "order")
