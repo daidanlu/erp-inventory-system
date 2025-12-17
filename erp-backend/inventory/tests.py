@@ -89,7 +89,8 @@ class ProductApiPermissionTests(TestCase):
             {"sku": "P002", "name": "Anon Product", "stock": 5},
             format="json",
         )
-        self.assertEqual(response.status_code, 403)
+        # With JWT authentication enabled, anonymous write attempts now, return 401 (unauthenticated) instead of 403.
+        self.assertEqual(response.status_code, 401)
 
     def test_non_staff_authenticated_user_is_read_only(self):
         # login as nonstaff user
