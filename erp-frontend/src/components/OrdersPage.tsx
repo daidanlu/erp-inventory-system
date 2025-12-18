@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Tag, Select, Space, Button } from 'antd';
+import { Table, Tag, Select, Space, Button, Popconfirm, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
 
@@ -16,17 +16,22 @@ interface Order {
   items: OrderItem[];
 }
 
-const OrdersPage: React.FC = () => {
+type OrdersPageProps = {
+  onDataChanged?: () => void;
+};
+
+const OrdersPage: React.FC<OrdersPageProps> = ({ onDataChanged }) => {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
 
   const pageSize = 10;
 
 
-    const fetchOrders = async () => {
+  const fetchOrders = async () => {
     setLoading(true);
     try {
       const resp = await axios.get('/api/orders/', {
@@ -36,13 +41,58 @@ const OrdersPage: React.FC = () => {
         },
       });
 
-      const data = Array.isArray(resp.data) ? resp.data : resp.data.results;
-      const count = Array.isArray(resp.data) ? data.length : resp.data.count ?? data.length;
+      // Robust parsing: backend might return array OR paginated object OR error shape
+      let data: Order[] = [];
+      let count = 0;
+
+      if (Array.isArray(resp.data)) {
+        data = resp.data as Order[];
+        count = data.length;
+      } else if (Array.isArray(resp.data?.results)) {
+        data = resp.data.results as Order[];
+        count = Number(resp.data.count ?? data.length);
+      } else {
+        data = [];
+        count = 0;
+      }
 
       setOrders(data);
       setTotal(count);
+    } catch (err) {
+      console.error('Failed to fetch orders', err);
+      message.error('Failed to load orders.');
+      setOrders([]);
+      setTotal(0);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const cancelOrder = async (orderId: number) => {
+    setCancellingId(orderId);
+    try {
+      await axios.post(`/api/orders/${orderId}/cancel/`);
+      message.success('Order cancelled. Inventory restored.');
+
+      // update Orders table immediately
+      setOrders((prev) =>
+        (Array.isArray(prev) ? prev : []).map((o) =>
+          o.id === orderId ? { ...o, status: 'cancelled' } : o
+        )
+      );
+
+      // trigger App refreshKey -> refresh ProductList / DashboardSummary / LowStockTable
+      onDataChanged?.();
+    } catch (err: any) {
+      const code = err?.response?.status;
+      if (code === 401 || code === 403) {
+        message.error('Not authorized. Please login as staff.');
+      } else {
+        message.error('Failed to cancel order.');
+      }
+    } finally {
+      setCancellingId(null);
+      fetchOrders();
     }
   };
 
@@ -50,19 +100,20 @@ const OrdersPage: React.FC = () => {
     fetchOrders();
   }, [page, statusFilter]);
 
-    const handleExportOrders = () => {
-      const params = new URLSearchParams();
-      if (statusFilter) {
-        params.append('status', statusFilter);
-      }
-      const query = params.toString();
-      const url = `/api/orders/export/${query ? `?${query}` : ''}`;
+  const handleExportOrders = () => {
+    const params = new URLSearchParams();
+    if (statusFilter) {
+      params.append('status', statusFilter);
+    }
+    const query = params.toString();
+    const url = query ? `/api/orders/export/?${query}` : `/api/orders/export/`;
 
-      window.open(url, '_blank');
-    };
+    window.open(url, '_blank');
+  };
 
 
-    const columns: ColumnsType<Order> = [
+
+  const columns: ColumnsType<Order> = [
     {
       title: 'ID',
       dataIndex: 'id',
@@ -79,23 +130,23 @@ const OrdersPage: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       render: (value: string) => {
-      let color: string = 'blue';
-      let label: string = value;
+        let color: string = 'blue';
+        let label: string = value;
 
-      if (value === 'draft') {
-      color = 'default';
-      label = 'Draft';
-    } else if (value === 'confirmed') {
-      color = 'green';
-      label = 'Confirmed';
-    } else if (value === 'cancelled') {
-      color = 'red';
-      label = 'Cancelled';
-    }
+        if (value === 'draft') {
+          color = 'default';
+          label = 'Draft';
+        } else if (value === 'confirmed') {
+          color = 'green';
+          label = 'Confirmed';
+        } else if (value === 'cancelled') {
+          color = 'red';
+          label = 'Cancelled';
+        }
 
-    return <Tag color={color}>{label}</Tag>;
-  },
-},
+        return <Tag color={color}>{label}</Tag>;
+      },
+    },
 
     {
       title: 'Items',
@@ -115,10 +166,34 @@ const OrdersPage: React.FC = () => {
       render: (value: string) =>
         new Date(value).toLocaleString(),
     },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Popconfirm
+          title="Cancel this order?"
+          description="This will restore inventory and record an audit movement."
+          okText="Cancel order"
+          cancelText="Keep"
+          okButtonProps={{ danger: true }}
+          onConfirm={() => cancelOrder(record.id)}
+          disabled={record.status === 'cancelled'}
+        >
+          <Button
+            size="small"
+            danger
+            disabled={record.status === 'cancelled'}
+            loading={cancellingId === record.id}
+          >
+            Cancel
+          </Button>
+        </Popconfirm>
+      ),
+    },
   ];
 
 
-    return (
+  return (
     <div>
       <div
         style={{

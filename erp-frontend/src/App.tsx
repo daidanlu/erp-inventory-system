@@ -38,13 +38,55 @@ axios.defaults.withCredentials = false;
 
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken');
-  if (token) {
+  const url = config.url ?? '';
+  // do not attach Authorization when calling token endpoints, otherwise an expired accessToken can break /api/token/ and /api/token/refresh/
+  const isTokenEndpoint = url.includes('/api/token/');
+  if (token && !isTokenEndpoint) {
     const headers = (config.headers || {}) as any;
     headers.Authorization = `Bearer ${token}`;
     config.headers = headers;
   }
   return config;
 });
+
+axios.interceptors.response.use(
+  (resp) => resp,
+  async (error) => {
+    const status = error?.response?.status;
+    const originalRequest = error?.config;
+
+    if (status === 401 && originalRequest && !originalRequest._retry) {
+      originalRequest._retry = true;
+
+      const refreshToken = localStorage.getItem('refreshToken');
+      if (refreshToken) {
+        try {
+          // refresh access token
+          const r = await axios.post('/api/token/refresh/', { refresh: refreshToken });
+          const newAccess = r.data?.access;
+          if (newAccess) {
+            localStorage.setItem('accessToken', newAccess);
+            originalRequest.headers = {
+              ...(originalRequest.headers || {}),
+              Authorization: `Bearer ${newAccess}`,
+            };
+            return axios(originalRequest);
+          }
+        } catch (e) {
+          // fall through to clear auth
+        }
+      }
+
+      // refresh failed or no refresh token: clear local auth and notify UI
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('refreshToken');
+      localStorage.removeItem('authUsername');
+      window.dispatchEvent(new Event('auth:expired'));
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 function App() {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -74,6 +116,18 @@ function App() {
     if (username) {
       setAuthUsername(username);
     }
+  }, []);
+
+  // Listen to auth expired event triggered by axios interceptor
+  useEffect(() => {
+    const onExpired = () => {
+      setAuthToken(null);
+      setAuthUsername(null);
+      message.warning('Session expired. Please login again.');
+      setRefreshKey((k) => k + 1);
+    };
+    window.addEventListener('auth:expired', onExpired);
+    return () => window.removeEventListener('auth:expired', onExpired);
   }, []);
 
   const handleExportProducts = () => {
@@ -246,7 +300,10 @@ function App() {
           }}
         >
           <h3>Recent Orders</h3>
-          <OrdersPage key={`orders-${refreshKey}`} />
+          <OrdersPage
+            key={`orders-${refreshKey}`}
+            onDataChanged={() => setRefreshKey((k) => k + 1)}
+          />
         </div>
 
         {/* 5. Customers list section */}
