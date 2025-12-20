@@ -41,26 +41,24 @@ const OrdersPage: React.FC<OrdersPageProps> = ({ onDataChanged }) => {
         },
       });
 
-      // Robust parsing: backend might return array OR paginated object OR error shape
-      let data: Order[] = [];
-      let count = 0;
-
-      if (Array.isArray(resp.data)) {
-        data = resp.data as Order[];
-        count = data.length;
-      } else if (Array.isArray(resp.data?.results)) {
-        data = resp.data.results as Order[];
-        count = Number(resp.data.count ?? data.length);
-      } else {
-        data = [];
-        count = 0;
-      }
+      // backend might return a list OR a paginated object; be defensive
+      const data: Order[] = Array.isArray(resp.data)
+        ? (resp.data as Order[])
+        : Array.isArray(resp.data?.results)
+          ? (resp.data.results as Order[])
+          : [];
+      const count = Array.isArray(resp.data)
+        ? data.length
+        : Number(resp.data?.count ?? data.length);
 
       setOrders(data);
       setTotal(count);
-    } catch (err) {
-      console.error('Failed to fetch orders', err);
-      message.error('Failed to load orders.');
+    } catch (err: any) {
+      const code = err?.response?.status;
+      // 401 is handled globally (auto-refresh or prompt login); avoid noisy crashes
+      if (code !== 401) {
+        console.error('Failed to load orders', err?.response || err);
+      }
       setOrders([]);
       setTotal(0);
     } finally {

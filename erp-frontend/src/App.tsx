@@ -23,7 +23,7 @@ import OrdersPage from './components/OrdersPage';
 import AdjustStockModal, {
   ProductForAdjust,
 } from './components/AdjustStockModal';
-import CustomersPage from './components/CustomersPage'; // 👈 新增
+import CustomersPage from './components/CustomersPage';
 
 const { Header, Content } = Layout;
 const { Text } = Typography;
@@ -35,7 +35,10 @@ const { Text } = Typography;
  */
 axios.defaults.baseURL = 'http://127.0.0.1:8000';
 axios.defaults.withCredentials = false;
-
+// Single-flight refresh to avoid spamming /api/token/refresh/ on concurrent 401s.
+let refreshInFlight: Promise<string | null> | null = null;
+// Prevent repeated session expired UX spam.
+let authExpiredNotified = false;
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken');
   const url = config.url ?? '';
@@ -53,17 +56,29 @@ axios.interceptors.response.use(
   (resp) => resp,
   async (error) => {
     const status = error?.response?.status;
-    const originalRequest = error?.config;
+    const originalRequest = error?.config as any;
+    const url: string = originalRequest?.url ?? '';
 
-    if (status === 401 && originalRequest && !originalRequest._retry) {
+    // do not try to refresh for token endpoints, avoid loops.
+    const isTokenEndpoint = url.includes('/api/token/');
+
+    if (status === 401 && originalRequest && !originalRequest._retry && !isTokenEndpoint) {
       originalRequest._retry = true;
 
       const refreshToken = localStorage.getItem('refreshToken');
       if (refreshToken) {
         try {
-          // refresh access token
-          const r = await axios.post('/api/token/refresh/', { refresh: refreshToken });
-          const newAccess = r.data?.access;
+          if (!refreshInFlight) {
+            refreshInFlight = axios
+              .post('/api/token/refresh/', { refresh: refreshToken })
+              .then((r) => (r.data?.access ? String(r.data.access) : null))
+              .catch(() => null)
+              .finally(() => {
+                refreshInFlight = null;
+              });
+          }
+
+          const newAccess = await refreshInFlight;
           if (newAccess) {
             localStorage.setItem('accessToken', newAccess);
             originalRequest.headers = {
@@ -72,16 +87,19 @@ axios.interceptors.response.use(
             };
             return axios(originalRequest);
           }
-        } catch (e) {
-          // fall through to clear auth
+        } catch {
+          // fall through to expired handler
         }
       }
 
-      // refresh failed or no refresh token: clear local auth and notify UI
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('refreshToken');
-      localStorage.removeItem('authUsername');
-      window.dispatchEvent(new Event('auth:expired'));
+      // Refresh failed or no refresh token: clear session + trigger global UX exactly once.
+      if (!authExpiredNotified) {
+        authExpiredNotified = true;
+        localStorage.removeItem('accessToken');
+        localStorage.removeItem('refreshToken');
+        localStorage.removeItem('authUsername');
+        window.dispatchEvent(new Event('auth:expired'));
+      }
     }
 
     return Promise.reject(error);
@@ -118,14 +136,16 @@ function App() {
     }
   }, []);
 
-  // Listen to auth expired event triggered by axios interceptor
+  // Global "session expired" handler (triggered by axios interceptor).
   useEffect(() => {
     const onExpired = () => {
       setAuthToken(null);
       setAuthUsername(null);
+      setLoginVisible(true);
       message.warning('Session expired. Please login again.');
       setRefreshKey((k) => k + 1);
     };
+
     window.addEventListener('auth:expired', onExpired);
     return () => window.removeEventListener('auth:expired', onExpired);
   }, []);
@@ -158,6 +178,7 @@ function App() {
       setAuthToken(access);
       setAuthUsername(values.username);
       setLoginVisible(false);
+      authExpiredNotified = false;
       message.success('Logged in successfully');
 
       // After successful login, the dashboard/list data will be forcibly refreshed
@@ -175,6 +196,7 @@ function App() {
     localStorage.removeItem('authUsername');
     setAuthToken(null);
     setAuthUsername(null);
+    authExpiredNotified = false;
     message.success('Logged out');
     setRefreshKey((k) => k + 1);
   };
