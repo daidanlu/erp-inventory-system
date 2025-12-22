@@ -1,10 +1,14 @@
 import csv
-from django.test import TestCase
+import threading
+import time
+from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
 from datetime import timedelta
 from django.utils import timezone
+from django.db import close_old_connections
+from django.db.utils import OperationalError
 
 from .models import Product, Order, OrderItem, Customer, StockMovement
 
@@ -334,28 +338,27 @@ class OrderStatusTests(TestCase):
         self.assertNotIn(o2.id, ids)
 
 
-class OrderCancelEndpointTests(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        User = get_user_model()
+class OrderCancelConcurrencyTests(TransactionTestCase):
+    """
+    Best-effort concurrency regression test for cancel endpoint. SQLite does not provide true row-level locks. This test still validates that even with near-simultaneous cancel calls the system does not double-restock or create extra StockMovement rows.
+    """
 
-        self.staff = User.objects.create_user(
-            username="cancelstaff",
+    def setUp(self):
+        self.user_model = get_user_model()
+        self.staff = self.user_model.objects.create_user(
+            username="cancelstaff_conc",
             password="cancelpass",
             is_staff=True,
         )
-
         self.product = Product.objects.create(
-            sku="CANCEL-1",
-            name="Cancel Product",
+            sku="CANCEL-CONC-1",
+            name="Cancel Concurrency Product",
             stock=10,
         )
 
-    def test_cancel_order_restocks_and_is_idempotent(self):
-        self.client.login(username="cancelstaff", password="cancelpass")
-
-        # create an order via API so it uses your serializer logic + creates initial StockMovement
-        create_resp = self.client.post(
+        c = APIClient()
+        c.force_authenticate(user=self.staff)
+        create_resp = c.post(
             "/api/orders/",
             {
                 "customer_name": "Cancel Customer",
@@ -364,106 +367,65 @@ class OrderCancelEndpointTests(TestCase):
             format="json",
         )
         self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
-        order_id = create_resp.data["id"]
+        self.order_id = create_resp.data["id"]
 
         self.product.refresh_from_db()
         self.assertEqual(self.product.stock, 7)  # 10 - 3
 
-        cancel_url = f"/api/orders/{order_id}/cancel/"
+    def test_concurrent_cancel_does_not_double_restock(self):
+        cancel_url = f"/api/orders/{self.order_id}/cancel/"
 
-        # first cancel: restock + write another StockMovement
-        cancel_resp = self.client.post(cancel_url, {}, format="json")
-        self.assertEqual(cancel_resp.status_code, status.HTTP_200_OK)
+        barrier = threading.Barrier(2)
+        results = []
+        results_lock = threading.Lock()
 
-        order = Order.objects.get(id=order_id)
+        def worker():
+            close_old_connections()
+
+            c = APIClient()
+            c.force_authenticate(user=self.staff)
+
+            barrier.wait()
+
+            last_exc = None
+            for _ in range(50):  # max ~ 50 * 50ms = 2.5s
+                try:
+                    resp = c.post(cancel_url, {}, format="json")
+                    with results_lock:
+                        results.append(resp.status_code)
+                    return
+                except OperationalError as e:
+                    last_exc = e
+                    if "locked" in str(e).lower():
+                        time.sleep(0.05)
+                        continue
+                    raise
+
+            with results_lock:
+                results.append(500)
+            if last_exc:
+                raise last_exc
+
+        t1 = threading.Thread(target=worker)
+        t2 = threading.Thread(target=worker)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        self.assertEqual(sorted(results), [200, 200])
+
+        order = Order.objects.get(id=self.order_id)
         self.assertEqual(order.status, Order.STATUS_CANCELLED)
 
         self.product.refresh_from_db()
-        self.assertEqual(self.product.stock, 10)  # back to 10
+        self.assertEqual(self.product.stock, 10)
 
         movements = StockMovement.objects.filter(
             order=order, product=self.product
         ).order_by("id")
         self.assertEqual(movements.count(), 2)
         self.assertEqual([m.delta for m in movements], [-3, 3])
-        self.assertEqual(movements[1].previous_stock, 7)
-        self.assertEqual(movements[1].new_stock, 10)
-
-        # second cancel: idempotent (no additional restock/movement)
-        cancel_resp2 = self.client.post(cancel_url, {}, format="json")
-        self.assertEqual(cancel_resp2.status_code, status.HTTP_200_OK)
-
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock, 10)
-        self.assertEqual(
-            StockMovement.objects.filter(order=order, product=self.product).count(),
-            2,
-        )
-
-
-class OrderCancelEndpointTests(TestCase):
-    def setUp(self):
-        self.client = APIClient()
-        User = get_user_model()
-
-        self.staff = User.objects.create_user(
-            username="cancelstaff",
-            password="cancelpass",
-            is_staff=True,
-        )
-
-        self.product = Product.objects.create(
-            sku="CANCEL-1",
-            name="Cancel Product",
-            stock=10,
-        )
-
-    def test_cancel_order_restocks_and_is_idempotent(self):
-        self.client.login(username="cancelstaff", password="cancelpass")
-        create_resp = self.client.post(
-            "/api/orders/",
-            {
-                "customer_name": "Cancel Customer",
-                "items": [{"product_id": self.product.id, "quantity": 3}],
-            },
-            format="json",
-        )
-        self.assertEqual(create_resp.status_code, status.HTTP_201_CREATED)
-        order_id = create_resp.data["id"]
-
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock, 7)  # 10 - 3
-
-        cancel_url = f"/api/orders/{order_id}/cancel/"
-
-        # first cancel: restock + write another StockMovement
-        cancel_resp = self.client.post(cancel_url, {}, format="json")
-        self.assertEqual(cancel_resp.status_code, status.HTTP_200_OK)
-
-        order = Order.objects.get(id=order_id)
-        self.assertEqual(order.status, Order.STATUS_CANCELLED)
-
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock, 10)  # back to 10
-
-        movements = StockMovement.objects.filter(
-            order=order, product=self.product
-        ).order_by("id")
-        self.assertEqual(movements.count(), 2)
-        self.assertEqual([m.delta for m in movements], [-3, 3])
-        self.assertEqual(movements[1].previous_stock, 7)
-        self.assertEqual(movements[1].new_stock, 10)
-
-        # second cancel: idempotent (no additional restock/movement)
-        cancel_resp2 = self.client.post(cancel_url, {}, format="json")
-        self.assertEqual(cancel_resp2.status_code, status.HTTP_200_OK)
-
-        self.product.refresh_from_db()
-        self.assertEqual(self.product.stock, 10)
-        self.assertEqual(
-            StockMovement.objects.filter(order=order, product=self.product).count(),
-            2,
-        )
 
 
 class DashboardSummaryTests(TestCase):

@@ -1,6 +1,7 @@
 import csv
 import uuid
 
+from django.shortcuts import get_object_or_404
 from datetime import timedelta
 
 from django.http import HttpResponse
@@ -198,11 +199,9 @@ class OrderViewSet(viewsets.ModelViewSet):
         Idempotent: cancelling an already-cancelled order will NOT restock again.
         """
         with transaction.atomic():
-            order = (
-                Order.objects.select_for_update()
-                .prefetch_related("items__product")
-                .get(pk=pk)
-            )
+            # Lock the order row first to make cancellation concurrency-safe.
+            # If two cancel requests race, only the first one will perform restock.
+            order = get_object_or_404(Order.objects.select_for_update(), pk=pk)
 
             # idempotent: already cancelled -> no-op
             if order.status == Order.STATUS_CANCELLED:
@@ -210,15 +209,19 @@ class OrderViewSet(viewsets.ModelViewSet):
                     self.get_serializer(order).data, status=status.HTTP_200_OK
                 )
 
-            item_qs = order.items.all()
-            product_ids = list(item_qs.values_list("product_id", flat=True))
+            # no prefetch cache surprises, and build a distinct product id list for locking
+            item_qs = order.items.select_related("product").all()
+            product_ids = list(item_qs.values_list("product_id", flat=True).distinct())
 
             # lock products to avoid concurrent updates
             products_qs = Product.objects.select_for_update().filter(id__in=product_ids)
             products_by_id = {p.id: p for p in products_qs}
 
             for item in item_qs:
-                product = products_by_id[item.product_id]
+                product = products_by_id.get(item.product_id)
+                if product is None:
+                    # shouldn't happen unless DB is inconsistent, but fail safely.
+                    raise ValidationError("Order item references a missing product.")
                 previous_stock = product.stock
                 delta = item.quantity  # restock
                 new_stock = previous_stock + delta
