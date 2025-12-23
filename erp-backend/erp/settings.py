@@ -42,13 +42,13 @@ INSTALLED_APPS = [
     "drf_spectacular",
     "inventory",
     "django_filters",
-    'corsheaders',
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
-    'corsheaders.middleware.CorsMiddleware',
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -58,27 +58,22 @@ MIDDLEWARE = [
 
 REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
-
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticatedOrReadOnly",
     ],
-
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "rest_framework.authentication.SessionAuthentication",
         "rest_framework.authentication.BasicAuthentication",
     ],
-
     "DEFAULT_FILTER_BACKENDS": [
         "django_filters.rest_framework.DjangoFilterBackend",
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
-
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
 }
-
 
 
 ROOT_URLCONF = "erp.urls"
@@ -125,6 +120,22 @@ DATABASES = {
         "PORT": config("DB_PORT", default=""),
     }
 }
+
+
+# SQLite stability tweaks for tests/dev:
+# - WAL: better concurrency for reads/writes
+# - busy_timeout: wait a bit instead of failing with database table is locked
+if DATABASES["default"]["ENGINE"].endswith("sqlite3"):
+    # Point Django to our custom backend that runs PRAGMAs on every new connection.
+    DATABASES["default"]["ENGINE"] = "erp.sqlite_backend"
+    # Keep a reasonable sqlite driver timeout as well.
+    DATABASES["default"].setdefault("OPTIONS", {})
+    DATABASES["default"]["OPTIONS"].update(
+        {
+            "timeout": 5,  # seconds
+        }
+    )
+
 
 SPECTACULAR_SETTINGS = {
     "TITLE": "ERP Inventory API",
@@ -174,10 +185,11 @@ STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOW_ALL_ORIGINS = True 
+CORS_ALLOW_ALL_ORIGINS = True
 
 from corsheaders.defaults import default_headers
+
 CORS_ALLOW_HEADERS = list(default_headers) + [
-    'authorization',  
-    'x-csrftoken',
+    "authorization",
+    "x-csrftoken",
 ]
