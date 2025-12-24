@@ -10,11 +10,30 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
+import os
 from pathlib import Path
 from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+
+def env_bool(name: str, default: str = "0") -> bool:
+    return str(os.getenv(name, default)).strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    )
+
+
+USE_POSTGRES = env_bool("USE_POSTGRES", "0")
+
+
+def env(name: str, default: str = "") -> str:
+    v = os.getenv(name)
+    return default if v is None else str(v).strip()
 
 
 # Quick-start development settings - unsuitable for production
@@ -98,29 +117,62 @@ WSGI_APPLICATION = "erp.wsgi.application"
 
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+# Local dev defaults to SQLite. Set USE_POSTGRES=1 (and PG_* vars) to switch to Postgres.
 
-from decouple import config
 
-# Database
-# local dev using sqlite，switch to PostgreSQL in the future
-DATABASES = {
-    "default": {
-        "ENGINE": config(
-            "DB_ENGINE",
-            default="django.db.backends.sqlite3",
-        ),
-        "NAME": config(
-            "DB_NAME",
-            default=str(BASE_DIR / "db.sqlite3"),
-        ),
-        # for PostgreSQL config
-        "USER": config("DB_USER", default=""),
-        "PASSWORD": config("DB_PASSWORD", default=""),
-        "HOST": config("DB_HOST", default=""),
-        "PORT": config("DB_PORT", default=""),
+def _env_first(*keys: str, default: str = "") -> str:
+    """Read settings with OS env taking priority over python-decouple (.env).
+
+    This avoids a common gotcha where an existing .env file silently overrides
+    PowerShell session variables (e.g., PG_PASSWORD), causing auth failures.
+    """
+
+    # 1) Prefer explicit process environment variables (PowerShell: $env:KEY="...").
+    for k in keys:
+        v = os.getenv(k)
+        if v not in (None, ""):
+            return v
+
+    # 2) Fall back to python-decouple (e.g., .env file) if present.
+    for k in keys:
+        try:
+            v = config(k, default=None)
+        except Exception:
+            v = None
+        if v not in (None, ""):
+            return str(v)
+
+    return default
+
+
+def _truthy(v: str) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+USE_POSTGRES = _truthy(os.getenv("USE_POSTGRES", "0"))
+
+if USE_POSTGRES:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": _env_first("PG_DB", "DB_NAME", default="erp"),
+            "USER": _env_first("PG_USER", "DB_USER", default="erp"),
+            "PASSWORD": _env_first("PG_PASSWORD", "DB_PASSWORD", default="erp"),
+            "HOST": _env_first("PG_HOST", "DB_HOST", default="127.0.0.1"),
+            "PORT": _env_first("PG_PORT", "DB_PORT", default="5432"),
+        }
     }
-}
-
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": _env_first("DB_ENGINE", default="django.db.backends.sqlite3"),
+            "NAME": _env_first("DB_NAME", default=str(BASE_DIR / "db.sqlite3")),
+            "USER": _env_first("DB_USER", default=""),
+            "PASSWORD": _env_first("DB_PASSWORD", default=""),
+            "HOST": _env_first("DB_HOST", default=""),
+            "PORT": _env_first("DB_PORT", default=""),
+        }
+    }
 
 # SQLite stability tweaks for tests/dev:
 # - WAL: better concurrency for reads/writes
