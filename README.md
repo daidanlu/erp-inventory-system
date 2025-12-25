@@ -670,3 +670,184 @@ python manage.py test inventory
   - “Recent orders from customer X”
   - “Total stock value by category”
 - Add more dashboard filters and charts on the frontend (orders over time, top customers, etc.).
+
+
+## Local Development (Backend + Postgres on Windows/Mac/Linux)
+
+This repo supports running the backend with **SQLite by default**, and **PostgreSQL** for a production‑like local environment.
+
+### Prerequisites
+
+- Python 3.11+
+- Docker Desktop (Docker Compose v2)
+- (Windows) PowerShell
+
+### 1) Start PostgreSQL (Docker)
+
+From the repo root:
+
+```powershell
+cd D:\erp-inventory-system
+docker compose up -d db
+docker ps
+```
+
+**Port note (important):**
+
+- PostgreSQL in the container listens on **5432**.
+- If your machine already has something using host port **5432** (common on Windows), map the container to host **5433** instead and use `PG_PORT=5433`.
+
+In `docker-compose.yml`, the `db` service should be:
+
+```yml
+services:
+  db:
+    ports:
+      - "5433:5432"  # host:container (use 5432:5432 if 5432 is free)
+```
+
+### 2) Create & activate venv, install deps
+
+```powershell
+cd D:\erp-inventory-system\erp-backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+If you use Postgres + psycopg3:
+
+```powershell
+pip install "psycopg[binary]"
+```
+
+### 3) Configure environment variables
+
+#### Option A — set vars in the current terminal session (PowerShell)
+
+```powershell
+$env:USE_POSTGRES="1"
+$env:PG_DB="erp"
+$env:PG_USER="erp"
+$env:PG_PASSWORD="erp"
+$env:PG_HOST="127.0.0.1"
+$env:PG_PORT="5433"  # use 5432 if you mapped 5432:5432
+```
+
+#### Option B — use a `.env` file
+
+Create `erp-backend/.env`:
+
+```env
+USE_POSTGRES=1
+PG_DB=erp
+PG_USER=erp
+PG_PASSWORD=erp
+PG_HOST=127.0.0.1
+PG_PORT=5433
+```
+> If your settings module reads directly from OS env vars, `.env` works only if your setup loads it (e.g., via `python-decouple`, `django-environ`, or a custom loader). If you’re not sure, use **Option A**.
+
+### 4) Verify DB connectivity (quick sanity check)
+
+Run from `erp-backend` (venv activated):
+
+```powershell
+python -c "import psycopg, os; conn=psycopg.connect(host=os.environ['PG_HOST'], port=os.environ['PG_PORT'], dbname=os.environ['PG_DB'], user=os.environ['PG_USER'], password=os.environ['PG_PASSWORD']); print(conn.execute('select 1').fetchone()); conn.close()"
+```
+
+Expected output:
+
+```
+(1,)
+```
+
+### 5) Run migrations
+
+```powershell
+python manage.py migrate
+```
+
+### 6) Create a superuser (optional)
+
+```powershell
+python manage.py createsuperuser
+```
+
+### 7) Run the backend server
+
+```powershell
+python manage.py runserver
+```
+
+Then open:
+
+- Admin: http://127.0.0.1:8000/admin/
+
+If schema UI is enabled, one of these may exist depending on your URL config:
+
+- Swagger UI: http://127.0.0.1:8000/api/schema/swagger-ui/
+- Redoc: http://127.0.0.1:8000/api/schema/redoc/
+
+### Stop / reset database
+
+Stop containers:
+
+```powershell
+cd D:\erp-inventory-system
+docker compose down
+```
+
+Hard reset DB volume (**DESTROYS ALL DATA**):
+
+```powershell
+docker compose down -v
+```
+
+### Troubleshooting
+
+#### `Password authentication failed for user "erp"`
+
+Usually means you are connecting to a **different Postgres than you think** (e.g., a host-installed Postgres on 5432), or the container was initialized with different credentials.
+
+Checklist:
+
+1) Confirm which host port is mapped:
+
+```powershell
+cd D:\erp-inventory-system
+docker ps
+```
+
+2) Inspect container env vars (should match your `PG_*`):
+
+```powershell
+docker inspect erp_postgres --format "{{range .Config.Env}}{{println .}}{{end}}" | findstr POSTGRES_
+```
+
+3) If you changed `POSTGRES_*` after a volume already existed, recreate the volume:
+
+```powershell
+docker compose down -v
+docker compose up -d db
+```
+
+4) If port 5432 is contested, use host 5433 mapping and set `PG_PORT=5433`.
+
+#### Compose validation error: `services.db.environment.ports must be ...`
+
+You put `ports:` under `environment:` by mistake.
+Make sure `ports:` is directly under the `db:` service, not nested in `environment:`.
+
+Correct:
+
+```yml
+services:
+  db:
+    environment:
+      POSTGRES_DB: erp
+      POSTGRES_USER: erp
+      POSTGRES_PASSWORD: erp
+    ports:
+      - "5433:5432"
+```
