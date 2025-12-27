@@ -851,3 +851,181 @@ services:
     ports:
       - "5433:5432"
 ```
+```
+
+    ---
+
+    ## Helper scripts
+
+    If you frequently switch between **SQLite** and **PostgreSQL** (or you have multiple local Postgres instances), these scripts help you avoid “it works in Docker but not in Django” problems.
+
+    ### 1) Verify PostgreSQL connectivity from Python
+
+    Create: `erp-backend/scripts/db_check.py`
+
+    ```python
+    #!/usr/bin/env python3
+'''
+Small sanity check for local Postgres connectivity.
+
+- Reads env vars (PG_* preferred, DB_* supported as fallback)
+- Prints a clear diagnosis + common fixes (wrong port, wrong password, container not started)
+'''
+from __future__ import annotations
+
+import os
+import sys
+from dataclasses import dataclass
+
+try:
+    import psycopg
+except Exception:
+    print('ERROR: psycopg is not installed in this venv.')
+    print('Fix: pip install "psycopg[binary]"')
+    raise
+
+
+def _env(*names: str, default: str | None = None) -> str | None:
+    for n in names:
+        v = os.environ.get(n)
+        if v is not None and v != "":
+            return v
+    return default
+
+
+@dataclass(frozen=True)
+class DbCfg:
+    host: str
+    port: int
+    dbname: str
+    user: str
+    password: str | None
+
+
+def load_cfg() -> DbCfg:
+    host = _env("PG_HOST", "DB_HOST", default="127.0.0.1")
+    port_s = _env("PG_PORT", "DB_PORT", default="5432")
+    dbname = _env("PG_DB", "DB_NAME", default="erp")
+    user = _env("PG_USER", "DB_USER", default="erp")
+    password = _env("PG_PASSWORD", "DB_PASSWORD", default=None)
+
+    try:
+        port = int(port_s)  # type: ignore[arg-type]
+    except Exception:
+        raise SystemExit(f"Invalid port value: {port_s!r}")
+
+    return DbCfg(host=host, port=port, dbname=dbname, user=user, password=password)
+
+
+def try_connect(cfg: DbCfg) -> tuple[bool, str]:
+    try:
+        conn = psycopg.connect(
+            host=cfg.host,
+            port=cfg.port,
+            dbname=cfg.dbname,
+            user=cfg.user,
+            password=cfg.password,
+            connect_timeout=3,
+        )
+        with conn.cursor() as cur:
+            cur.execute("select 1;")
+            val = cur.fetchone()
+        conn.close()
+        return True, f"OK: connected to {cfg.host}:{cfg.port}/{cfg.dbname} as {cfg.user}. Result={val}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
+def main() -> None:
+    cfg = load_cfg()
+    ok, msg = try_connect(cfg)
+    if ok:
+        print(msg)
+        return
+
+    print("FAILED:", msg)
+    print()
+    print("Most common fixes:")
+    print("1) Wrong port")
+    print("   - If Postgres is in Docker, your host port might be 5433 (not 5432).")
+    print("   - Check: docker ps  (look for '0.0.0.0:XXXX->5432/tcp')")
+    print("2) Wrong password/user/db")
+    print("   - Check container env: docker inspect <container> --format "{{range .Config.Env}}{{println .}}{{end}}"")
+    print("3) Container not running")
+    print("   - Start: docker compose up -d db")
+    print()
+    if cfg.port == 5432:
+        alt = DbCfg(host=cfg.host, port=5433, dbname=cfg.dbname, user=cfg.user, password=cfg.password)
+        ok2, msg2 = try_connect(alt)
+        if ok2:
+            print("HINT: Connection works on port 5433.")
+            print("Set: $env:PG_PORT="5433"  (PowerShell)")
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
+    ```
+
+    Run (from `erp-backend/` in the venv):
+
+    ```powershell
+    python scripts\db_check.py
+    ```
+
+    ### 2) One-command local Postgres dev bootstrap (Windows PowerShell)
+
+    Create: `scripts/dev.ps1`
+
+    ```powershell
+    param(
+  [int]$DbPort = 5433,
+  [string]$DbHost = "127.0.0.1",
+  [string]$DbName = "erp",
+  [string]$DbUser = "erp",
+  [string]$DbPassword = "erp",
+  [switch]$RunServer
+)
+
+$ErrorActionPreference = "Stop"
+
+# Repo root is the parent of this scripts/ folder
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+
+Write-Host "==> Starting db container (docker compose up -d db)"
+Set-Location $RepoRoot
+docker compose up -d db | Out-Host
+
+Write-Host "==> Activating backend venv"
+Set-Location "$RepoRoot\erp-backend"
+. .\.venv\Scripts\Activate.ps1
+
+Write-Host "==> Exporting env vars for Postgres"
+$env:USE_POSTGRES = "1"
+$env:PG_DB = $DbName
+$env:PG_USER = $DbUser
+$env:PG_PASSWORD = $DbPassword
+$env:PG_HOST = $DbHost
+$env:PG_PORT = "$DbPort"
+
+Write-Host "==> Checking DB connectivity"
+python scripts\db_check.py
+
+Write-Host "==> Running migrations"
+python manage.py migrate
+
+if ($RunServer) {
+  Write-Host "==> Starting Django dev server"
+  python manage.py runserver
+} else {
+  Write-Host "Done. (Add -RunServer to start the dev server.)"
+}
+    ```
+
+    Run (from repo root):
+
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File .\scripts\dev.ps1 -DbPort 5433 -RunServer
+    ```
+
+    > If your Postgres host port is still 5432, run: `.\scripts\dev.ps1 -DbPort 5432 -RunServer`
