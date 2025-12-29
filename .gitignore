@@ -6,6 +6,8 @@ dist/
 
 *.log
 .env
+.env.local
+.env.*.local
 
 erp-backend/.venv/
 erp-backend/db.sqlite3
