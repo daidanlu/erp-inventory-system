@@ -1,14 +1,15 @@
-export interface ChatMessage {
-  id?: number;
-  // backend returns 'user' | 'bot'
-  role: 'user' | 'bot'; 
-  // backend returns 'content'
-  content: string; 
-  created_at?: string;
-}
+export type ChatRole = "user" | "bot";
+export type ChatMessage = {
 
-export interface ChatResponse {
+  id?: number;
+  session_id?: string;
+  role: ChatRole;
+  content: string;
+  created_at?: string;
+};
+
+export type ChatResponse = {
   session_id: string;
   reply: string;
   history: ChatMessage[];
-}
+};

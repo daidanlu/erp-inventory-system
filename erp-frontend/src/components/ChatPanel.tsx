@@ -11,7 +11,7 @@ export const ChatPanel: React.FC = () => {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState("");
-  
+
   // scroll to the bottom of the reference
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -35,21 +35,28 @@ export const ChatPanel: React.FC = () => {
 
     try {
       // 2. send request
-      const resp = await axios.post<ChatResponse>('/api/chat/', {
-        session_id: sessionId,
-        message: trimmed,
-      });
+      const resp = await axios.post<ChatResponse>(
+        "/api/chat/",
+        sessionId
+          ? { session_id: sessionId, message: trimmed }
+          : { message: trimmed }
+      );
 
       const data = resp.data;
-      
+
       // update session_id to maintain session
       if (data.session_id) {
         setSessionId(data.session_id);
       }
 
-      // 3. show response of the chatbot
-      const botMsg: ChatMessage = { role: "bot", content: data.reply };
-      setMessages((prev) => [...prev, botMsg]);
+      // 3. Sync UI with server-side history to avoid drift.
+      if (Array.isArray(data.history)) {
+        setMessages(data.history);
+      } else {
+        // Fallback
+        const botMsg: ChatMessage = { role: "bot", content: data.reply };
+        setMessages((prev) => [...prev, botMsg]);
+      }
 
     } catch (err) {
       console.error(err);
@@ -70,13 +77,16 @@ export const ChatPanel: React.FC = () => {
       <div style={{ flex: 1, overflowY: "auto", marginBottom: 12, paddingRight: 4 }}>
         <List
           dataSource={messages}
+          rowKey={(msg) =>
+            msg.id != null ? String(msg.id) : (msg.created_at ?? `${msg.role}-${msg.content}`)
+          }
           split={false}
           renderItem={(msg) => (
             <List.Item style={{ justifyContent: msg.role === "user" ? "flex-end" : "flex-start", padding: '4px 0' }}>
               <div style={{ display: 'flex', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', alignItems: 'flex-start', maxWidth: '90%' }}>
-                <Avatar 
-                  size="small" 
-                  icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />} 
+                <Avatar
+                  size="small"
+                  icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
                   style={{ backgroundColor: msg.role === 'user' ? '#1677ff' : '#52c41a', margin: '0 8px' }}
                 />
                 <div
@@ -98,7 +108,7 @@ export const ChatPanel: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
-     
+
       <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
         <TextArea
           rows={2}
