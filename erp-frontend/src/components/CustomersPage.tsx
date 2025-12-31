@@ -1,15 +1,16 @@
 // src/components/CustomersPage.tsx
 import React, { useEffect, useState } from 'react';
-import { Table } from 'antd';
+import { Button, Space, Table, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
+import CreateCustomerModal from './CreateCustomerModal';
 
 type Customer = {
   id: number;
   name: string;
-  email: string;
-  phone: string;
-  address: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
 };
 
 type CustomerListResponse = {
@@ -24,6 +25,7 @@ const CustomersPage: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const fetchCustomers = async (pageNum = 1) => {
     setLoading(true);
@@ -32,13 +34,13 @@ const CustomersPage: React.FC = () => {
         params: { page: pageNum },
       });
 
-      const payload = resp.data as any;
-      const items: Customer[] = payload.results ?? payload;
-
+      const payload = resp.data;
+      const items = payload.results;
       setData(items);
       setTotal(payload.count ?? items.length);
     } catch (err) {
       console.error('Failed to load customers', err);
+      message.error('Failed to load customers.');
     } finally {
       setLoading(false);
     }
@@ -87,18 +89,44 @@ const CustomersPage: React.FC = () => {
   ];
 
   return (
-    <Table<Customer>
-      rowKey="id"
-      columns={columns}
-      dataSource={data}
-      loading={loading}
-      pagination={{
-        current: page,
-        total,
-        pageSize: 10,
-        onChange: (p) => setPage(p),
-      }}
-    />
+    <>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 16,
+        }}
+      >
+        <Space />
+        <Button size="small" type="primary" onClick={() => setCreateOpen(true)}>
+          New Customer
+        </Button>
+      </div>
+
+      <Table<Customer>
+        rowKey="id"
+        columns={columns}
+        dataSource={data}
+        loading={loading}
+        pagination={{
+          current: page,
+          total,
+          pageSize: 10,
+          onChange: (p) => setPage(p),
+        }}
+      />
+
+      <CreateCustomerModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSuccess={() => {
+          // refresh list; avoid missing refresh when already on page 1
+          if (page !== 1) setPage(1);
+          else fetchCustomers(1);
+        }}
+      />
+    </>
   );
 };
 
