@@ -287,6 +287,7 @@ function App() {
               <ProductList
                 key={`prod-${refreshKey}`}
                 onAdjustProduct={handleAdjustProduct}
+                onDataChanged={() => setRefreshKey((k) => k + 1)}
               />
             </div>
           </Col>

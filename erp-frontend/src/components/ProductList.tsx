@@ -1,8 +1,10 @@
+// erp-frontend/src/components/ProductList.tsx
 import React, { useEffect, useState } from 'react';
-import { Table, Tag, Button } from 'antd';
+import { Table, Tag, Button, Space } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import axios from 'axios';
 import ProductStockHistoryDrawer from './ProductStockHistoryDrawer';
+import BulkAdjustStockModal from './BulkAdjustStockModal';
 
 type Product = {
   id: number;
@@ -20,13 +22,16 @@ type ProductListResponse = {
 
 interface ProductListProps {
   onAdjustProduct: (product: Product) => void;
+  onDataChanged?: () => void;
 }
 
-const ProductList: React.FC<ProductListProps> = ({ onAdjustProduct }) => {
+const ProductList: React.FC<ProductListProps> = ({ onAdjustProduct, onDataChanged }) => {
   const [data, setData] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const [historyProductId, setHistoryProductId] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -112,6 +117,21 @@ const ProductList: React.FC<ProductListProps> = ({ onAdjustProduct }) => {
 
   return (
     <>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          marginBottom: 12,
+        }}
+      >
+        <Space>
+          <Button size="small" onClick={() => setBulkOpen(true)}>
+            Bulk adjust
+          </Button>
+        </Space>
+      </div>
+
       <Table<Product>
         rowKey="id"
         columns={columns}
@@ -122,6 +142,15 @@ const ProductList: React.FC<ProductListProps> = ({ onAdjustProduct }) => {
           total,
           pageSize: 10,
           onChange: (p) => setPage(p),
+        }}
+      />
+
+      <BulkAdjustStockModal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        onSuccess={() => {
+          fetchProducts(page);
+          onDataChanged?.();
         }}
       />
 
