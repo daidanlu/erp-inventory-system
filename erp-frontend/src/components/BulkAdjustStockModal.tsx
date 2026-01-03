@@ -43,6 +43,46 @@ function formatDrfError(data: any): string {
   return String(data);
 }
 
+function tryShowBulkAdjustApiError(data: any): boolean {
+  if (!data || typeof data !== 'object') return false;
+
+  // Case 1: backend returns missing ids
+  // { message: "Products not found.", missing_product_ids: [12, 99] }
+  if (Array.isArray((data as any).missing_product_ids) && (data as any).missing_product_ids.length) {
+    message.error(`Products not found: ${(data as any).missing_product_ids.join(', ')}`);
+    return true;
+  }
+
+  // Case 2: backend returns structured negative-stock violation
+  // {
+  //   message: "Stock would become negative.",
+  //   product_id: 1, sku: "P001",
+  //   current_stock: 3, delta: -10, computed_stock: -7
+  // }
+  if (
+    (data as any).message === 'Stock would become negative.' ||
+    (typeof (data as any).computed_stock === 'number' &&
+      (typeof (data as any).current_stock === 'number' || typeof (data as any).delta === 'number'))
+  ) {
+    const sku = (data as any).sku;
+    const pid = (data as any).product_id;
+    const cur = (data as any).current_stock;
+    const delta = (data as any).delta;
+    const computed = (data as any).computed_stock;
+    const who = sku ?? (pid != null ? `id=${pid}` : 'product');
+
+    if (typeof cur === 'number' && typeof delta === 'number' && typeof computed === 'number') {
+      message.error(`${who}: ${cur} + (${delta}) = ${computed} (negative)`);
+    } else {
+      message.error(`${who}: stock would become negative.`);
+    }
+    return true;
+  }
+
+  return false;
+}
+
+
 type Props = {
   open: boolean;
   onClose: () => void;
@@ -271,7 +311,10 @@ const BulkAdjustStockModal: React.FC<Props> = ({ open, onClose, onSuccess }) => 
       onSuccess();
       onClose();
     } catch (err: any) {
-      const detail = formatDrfError(err?.response?.data) || err?.message || 'Bulk adjust failed';
+      const data = err?.response?.data;
+      if (tryShowBulkAdjustApiError(data)) return;
+
+      const detail = formatDrfError(data) || err?.message || 'Bulk adjust failed';
       console.error('Bulk adjust failed', err?.response || err);
       message.error(detail);
     } finally {

@@ -93,7 +93,13 @@ class ProductViewSet(viewsets.ModelViewSet):
         products_by_id = {p.id: p for p in products_qs}
 
         if len(products_by_id) != len(set(product_ids)):
-            raise ValidationError("One or more products do not exist.")
+            missing_ids = sorted(set(product_ids) - set(products_by_id.keys()))
+            raise ValidationError(
+                {
+                    "message": "Products not found.",
+                    "missing_product_ids": missing_ids,
+                }
+            )
 
         with transaction.atomic():
             # check validity of all changes(deltas)
@@ -102,8 +108,14 @@ class ProductViewSet(viewsets.ModelViewSet):
                 new_stock = product.stock + item["delta"]
                 if new_stock < 0:
                     raise ValidationError(
-                        f"Stock for product {product.sku} would become negative "
-                        f"({product.stock} + {item['delta']})."
+                        {
+                            "message": "Stock would become negative.",
+                            "product_id": product.id,
+                            "sku": product.sku,
+                            "current_stock": product.stock,
+                            "delta": item["delta"],
+                            "computed_stock": new_stock,
+                        }
                     )
 
             # apply changes
