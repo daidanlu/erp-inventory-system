@@ -9,7 +9,8 @@ from django.db import transaction
 from django.utils import timezone
 from django.db.models import Sum
 
-from rest_framework import viewsets, status
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework import viewsets, status, filters
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, AllowAny
 from rest_framework.response import Response
@@ -165,6 +166,8 @@ class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
     permission_classes = [AllowAny]
+
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
 
     filterset_fields = {
         "customer": ["exact"],
