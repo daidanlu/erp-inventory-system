@@ -60,7 +60,11 @@ export const ChatPanel: React.FC = () => {
 
     } catch (err) {
       console.error(err);
-      const errorMsg: ChatMessage = { role: "bot", content: "⚠️ Error connecting to server." };
+      const detail = (err as any)?.response?.data?.detail || (err as any)?.message;
+      const errorMsg: ChatMessage = {
+        role: "bot",
+        content: `⚠️ ${detail ? String(detail) : "Error connecting to server."}`,
+      };
       setMessages((prev) => [...prev, errorMsg]);
     } finally {
       setLoading(false);

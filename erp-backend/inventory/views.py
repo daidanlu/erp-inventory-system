@@ -1,5 +1,10 @@
 import csv
 import uuid
+import os
+import json
+import socket
+import urllib.request
+import urllib.error
 
 from django.shortcuts import get_object_or_404
 from datetime import timedelta
@@ -167,7 +172,11 @@ class OrderViewSet(viewsets.ModelViewSet):
     serializer_class = OrderSerializer
     permission_classes = [AllowAny]
 
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter,
+    ]
 
     filterset_fields = {
         "customer": ["exact"],
@@ -353,6 +362,126 @@ def dashboard_summary(request):
     return Response(data)
 
 
+def _to_openai_role(role: str) -> str:
+    if role == ChatMessage.ROLE_USER:
+        return "user"
+    # stored as "bot" in DB
+    return "assistant"
+
+
+def _call_openai_compatible_chat(
+    *, base_url: str, model: str, messages: list[dict], timeout_s: int
+) -> str:
+    """Call an OpenAI-compatible /v1/chat/completions endpoint (e.g., llama.cpp server)."""
+    base_url = base_url.rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    payload = {
+        "model": model,
+        "messages": messages,
+        "temperature": float(os.environ.get("LLM_TEMPERATURE", "0.2")),
+        "max_tokens": int(os.environ.get("LLM_MAX_TOKENS", "256")),
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        # propagate a readable error upwards
+        try:
+            body = e.read().decode("utf-8")
+        except Exception:
+            body = ""
+        raise RuntimeError(f"LLM HTTP {e.code}: {body or e.reason}") from e
+    except (urllib.error.URLError, socket.timeout) as e:
+        raise RuntimeError(f"LLM connection error: {e}") from e
+
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise RuntimeError("LLM returned non-JSON response") from e
+
+    # OpenAI-compatible: choices[0].message.content
+    try:
+        choice0 = (obj.get("choices") or [])[0]
+        msg = choice0.get("message") or {}
+        content = msg.get("content")
+        if content:
+            return str(content).strip()
+        # some servers return text directly
+        text = choice0.get("text")
+        if text:
+            return str(text).strip()
+    except Exception:
+        pass
+
+    raise RuntimeError("LLM returned an empty response")
+
+
+def generate_llm_reply(*, session_id: str, user_message: str) -> str:
+    """
+    Generate a reply via a pluggable LLM provider:
+      - LLM_PROVIDER=mock: deterministic mock reply (for testing without running a model server)
+      - LLM_PROVIDER=openai_compat: call an OpenAI-compatible /v1/chat/completions endpoint (e.g., llama.cpp server)
+      - otherwise: fall back to placeholder (simple_bot_reply)
+    """
+    provider = (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+
+    if provider == "mock":
+        # Deterministic reply for end-to-end testing (no model server required).
+        # Include session id + an echo of the user message (truncated) to aid debugging.
+        echo = user_message.replace("\n", " ").strip()
+        if len(echo) > 120:
+            echo = echo[:120] + "…"
+        return f'[MOCK_LLM] session={session_id} | echo="{echo}"'
+
+    if provider != "openai_compat":
+        return simple_bot_reply(user_message)
+
+    base_url = os.environ.get("LLM_BASE_URL")
+    if not base_url:
+        raise RuntimeError(
+            "LLM_PROVIDER=openai_compat requires LLM_BASE_URL (e.g., http://127.0.0.1:8080/v1)"
+        )
+
+    model = os.environ.get("LLM_MODEL", "llama-3.2-1b")
+    timeout_s = int(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
+
+    system_prompt = os.environ.get(
+        "LLM_SYSTEM_PROMPT",
+        (
+            "You are an ERP assistant embedded in a warehouse/order management system. "
+            "You are READ-ONLY: do not claim that you changed inventory, orders, or customers. "
+            "If the user asks you to modify data or perform actions, refuse and instruct them to use the ERP UI."
+        ),
+    )
+
+    # Use last few turns for context
+    recent = ChatMessage.objects.filter(session_id=session_id).order_by("-created_at")[
+        :10
+    ]
+    recent = list(recent)[::-1]
+
+    msgs = [{"role": "system", "content": system_prompt}]
+    for m in recent:
+        msgs.append({"role": _to_openai_role(m.role), "content": m.content})
+
+    return _call_openai_compatible_chat(
+        base_url=base_url,
+        model=model,
+        messages=msgs,
+        timeout_s=timeout_s,
+    )
+
+
 def simple_bot_reply(message: str) -> str:
     """
     Placeholder bot logic.
@@ -410,8 +539,14 @@ def chat_with_bot(request):
         content=message,
     )
 
-    # generate bot reply (placeholder logic for now)
-    reply_text = simple_bot_reply(message)
+    # generate bot reply (LLM if configured; otherwise placeholder fallback)
+    try:
+        reply_text = generate_llm_reply(session_id=session_id, user_message=message)
+    except RuntimeError as e:
+        return Response(
+            {"detail": str(e)},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
 
     ChatMessage.objects.create(
         session_id=session_id,
