@@ -7,7 +7,7 @@ import urllib.request
 import urllib.error
 
 from django.shortcuts import get_object_or_404
-from datetime import timedelta
+from datetime import timedelta, datetime, time
 
 from django.http import HttpResponse
 from django.db import transaction
@@ -426,22 +426,121 @@ def _call_openai_compatible_chat(
     raise RuntimeError("LLM returned an empty response")
 
 
-def generate_llm_reply(*, session_id: str, user_message: str) -> str:
+def _get_llm_provider() -> str:
+    return (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+
+
+def _tool_low_stock(args: dict) -> dict:
     """
-    Generate a reply via a pluggable LLM provider:
-      - LLM_PROVIDER=mock: deterministic mock reply (for testing without running a model server)
-      - LLM_PROVIDER=openai_compat: call an OpenAI-compatible /v1/chat/completions endpoint (e.g., llama.cpp server)
-      - otherwise: fall back to placeholder (simple_bot_reply)
+    Return low stock products.
+    args:
+      - threshold (int, default 5)
+      - limit (int, default 20)
     """
-    provider = (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+    try:
+        threshold = int(args.get("threshold", 5))
+    except Exception:
+        threshold = 5
+    try:
+        limit = int(args.get("limit", 20))
+    except Exception:
+        limit = 20
+    limit = max(1, min(limit, 200))
+
+    qs_all = Product.objects.filter(stock__lte=threshold)
+    total = qs_all.count()
+    qs = qs_all.order_by("stock", "sku")[:limit]
+
+    items = [
+        {
+            "id": p.id,
+            "sku": p.sku,
+            "name": p.name,
+            "stock": p.stock,
+        }
+        for p in qs
+    ]
+    return {
+        "tool": "low_stock",
+        "threshold": threshold,
+        "total": total,
+        "returned": len(items),
+        "items": items,
+    }
+
+
+def _tool_orders_today(args: dict) -> dict:
+    """
+    Return today's order counts + breakdown by status.
+    args: (reserved for future; currently ignored)
+    """
+    tz = timezone.get_current_timezone()
+    today = timezone.localdate()
+    start = timezone.make_aware(datetime.combine(today, time.min), timezone=tz)
+    end = start + timedelta(days=1)
+
+    qs = Order.objects.filter(created_at__gte=start, created_at__lt=end)
+    total = qs.count()
+
+    statuses = [
+        Order.STATUS_DRAFT,
+        Order.STATUS_CONFIRMED,
+        Order.STATUS_CANCELLED,
+    ]
+    by_status = {s: qs.filter(status=s).count() for s in statuses}
+
+    return {
+        "tool": "orders_today",
+        "date": str(today),
+        "total": total,
+        "by_status": by_status,
+    }
+
+
+TOOLS_REGISTRY = {
+    "low_stock": _tool_low_stock,
+    "orders_today": _tool_orders_today,
+}
+
+
+def _run_tool(tool_name: str, args: dict) -> dict:
+    fn = TOOLS_REGISTRY.get(tool_name)
+    if not fn:
+        raise RuntimeError(f"Unknown tool: {tool_name}")
+    if args is None:
+        args = {}
+    if not isinstance(args, dict):
+        raise RuntimeError("args must be an object/dict")
+    return fn(args)
+
+
+def generate_llm_reply(
+    *,
+    session_id: str,
+    user_message: str,
+    tool_name: str | None = None,
+    tool_result: dict | None = None,
+) -> str:
+    """
+    Generate a reply via a pluggable provider:
+      - LLM_PROVIDER=mock: deterministic reply (optionally includes tool result)
+      - LLM_PROVIDER=openai_compat: call OpenAI-compatible /v1/chat/completions (e.g., llama.cpp server)
+      - otherwise: placeholder fallback
+    """
+    provider = _get_llm_provider()
 
     if provider == "mock":
-        # Deterministic reply for end-to-end testing (no model server required).
-        # Include session id + an echo of the user message (truncated) to aid debugging.
         echo = user_message.replace("\n", " ").strip()
         if len(echo) > 120:
             echo = echo[:120] + "…"
-        return f'[MOCK_LLM] session={session_id} | echo="{echo}"'
+        if tool_result is not None:
+            tool_json = json.dumps(tool_result, ensure_ascii=False)
+            return (
+                f"[MOCK_LLM] tool={tool_name or 'none'} session={session_id} | echo=\"{echo}\"\n"
+                f"TOOL_RESULT={tool_json}\n"
+                f"Summary: (mock) See TOOL_RESULT above."
+            )
+        return f'[MOCK_LLM] tool=none session={session_id} | echo="{echo}"'
 
     if provider != "openai_compat":
         return simple_bot_reply(user_message)
@@ -471,6 +570,14 @@ def generate_llm_reply(*, session_id: str, user_message: str) -> str:
     recent = list(recent)[::-1]
 
     msgs = [{"role": "system", "content": system_prompt}]
+    if tool_result is not None:
+        tool_json = json.dumps(tool_result, ensure_ascii=False)
+        msgs.append(
+            {
+                "role": "system",
+                "content": f"Tool result available (JSON). tool={tool_name or 'unknown'}: {tool_json}",
+            }
+        )
     for m in recent:
         msgs.append({"role": _to_openai_role(m.role), "content": m.content})
 
@@ -525,12 +632,41 @@ def chat_with_bot(request):
 
     session_id = serializer.validated_data.get("session_id") or uuid.uuid4().hex
     message = serializer.validated_data["message"].strip()
+    tool = request.data.get("tool")
+    args = request.data.get("args") or {}
 
     if not message:
         return Response(
             {"detail": "Empty message."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+
+    # If mock mode and no explicit tool provided, do a tiny keyword-based routing
+    # to simulate "LLM chooses a tool" without needing a model server.
+    provider = _get_llm_provider()
+    if provider == "mock" and not tool:
+        q = message.lower()
+        if "low stock" in q or "low-stock" in q or "lowstock" in q or "库存" in q:
+            tool = "low_stock"
+        elif (
+            "orders today" in q
+            or "today's orders" in q
+            or "今日订单" in q
+            or "今天订单" in q
+        ):
+            tool = "orders_today"
+
+    tool_result = None
+    tool_name = None
+    if tool:
+        try:
+            tool_name = str(tool).strip()
+            tool_result = _run_tool(tool_name, args)
+        except RuntimeError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     # save user message
     ChatMessage.objects.create(
@@ -541,7 +677,12 @@ def chat_with_bot(request):
 
     # generate bot reply (LLM if configured; otherwise placeholder fallback)
     try:
-        reply_text = generate_llm_reply(session_id=session_id, user_message=message)
+        reply_text = generate_llm_reply(
+            session_id=session_id,
+            user_message=message,
+            tool_name=tool_name,
+            tool_result=tool_result,
+        )
     except RuntimeError as e:
         return Response(
             {"detail": str(e)},
@@ -566,6 +707,7 @@ def chat_with_bot(request):
         {
             "session_id": session_id,
             "reply": reply_text,
+            "tool_result": tool_result,
             "history": history,
         },
         status=status.HTTP_200_OK,
