@@ -1,10 +1,29 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Card, List, Input, Button, Avatar } from "antd";
+import { Card, List, Input, Button, Avatar, Table, Descriptions } from "antd";
 import { UserOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import type { ChatMessage, ChatResponse } from "../types/chat";
 
 const { TextArea } = Input;
+
+type ToolResultLowStock = {
+  tool: "low_stock";
+  threshold: number;
+  total: number;
+  returned: number;
+  items: Array<{ id: number; sku: string; name?: string; stock: number }>;
+};
+
+type ToolResultOrdersToday = {
+  tool: "orders_today";
+  date: string;
+  total: number;
+  by_status: Record<string, number>;
+};
+
+type ToolResult = ToolResultLowStock | ToolResultOrdersToday | { tool: string;[k: string]: any };
+type ChatResponseWithTool = ChatResponse & { tool_result?: ToolResult | null };
+type ChatMessageWithTool = ChatMessage & { toolResult?: ToolResult | null };
 
 export const ChatPanel: React.FC = () => {
   const [sessionId, setSessionId] = useState<string>("");
@@ -23,6 +42,69 @@ export const ChatPanel: React.FC = () => {
     scrollToBottom();
   }, [messages]);
 
+  const renderToolBlock = (toolResult: ToolResult) => {
+    if (!toolResult || typeof toolResult !== "object") return null;
+
+    if (toolResult.tool === "low_stock") {
+      const tr = toolResult as ToolResultLowStock;
+      const dataSource = Array.isArray(tr.items) ? tr.items : [];
+      return (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.75 }}>
+            Low stock (≤ {tr.threshold}) · total {tr.total} · showing {tr.returned}
+          </div>
+          <Table
+            size="small"
+            pagination={false}
+            dataSource={dataSource}
+            rowKey={(r) => String(r.id ?? r.sku)}
+            columns={[
+              { title: "SKU", dataIndex: "sku", key: "sku", width: 120 },
+              { title: "Name", dataIndex: "name", key: "name" },
+              { title: "Stock", dataIndex: "stock", key: "stock", width: 90 },
+            ]}
+          />
+        </div>
+      );
+    }
+
+    if (toolResult.tool === "orders_today") {
+      const tr = toolResult as ToolResultOrdersToday;
+      const by = tr.by_status || {};
+      const entries = Object.entries(by);
+      return (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.75 }}>
+            Orders today · {tr.date}
+          </div>
+          <Descriptions size="small" column={1} bordered>
+            <Descriptions.Item label="Total">{tr.total}</Descriptions.Item>
+            <Descriptions.Item label="By status">
+              {entries.length ? (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {entries.map(([k, v]) => (
+                    <span key={k} style={{ fontSize: 12 }}>
+                      <strong>{k}</strong>: {v}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <span style={{ fontSize: 12, opacity: 0.75 }}>No breakdown</span>
+              )}
+            </Descriptions.Item>
+          </Descriptions>
+        </div>
+      );
+    }
+
+
+    return (
+      <pre style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap" }}>
+        {JSON.stringify(toolResult, null, 2)}
+      </pre>
+    );
+  };
+
   const sendMessage = async () => {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
@@ -35,7 +117,7 @@ export const ChatPanel: React.FC = () => {
 
     try {
       // 2. send request
-      const resp = await axios.post<ChatResponse>(
+      const resp = await axios.post<ChatResponseWithTool>(
         "/api/chat/",
         sessionId
           ? { session_id: sessionId, message: trimmed }
@@ -51,10 +133,24 @@ export const ChatPanel: React.FC = () => {
 
       // 3. Sync UI with server-side history to avoid drift.
       if (Array.isArray(data.history)) {
-        setMessages(data.history);
+        // Server history does not include tool_result; attach tool_result to the latest bot message in UI.
+        const history = data.history as ChatMessageWithTool[];
+        const toolResult = (data as any).tool_result ?? null;
+        if (toolResult) {
+          for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i]?.role === "bot") {
+              history[i] = { ...(history[i] as any), toolResult };
+              break;
+            }
+          }
+        }
+        setMessages(history);
       } else {
-        // Fallback
-        const botMsg: ChatMessage = { role: "bot", content: data.reply };
+        const botMsg: ChatMessageWithTool = {
+          role: "bot",
+          content: data.reply,
+          toolResult: (data as any).tool_result ?? null,
+        };
         setMessages((prev) => [...prev, botMsg]);
       }
 
@@ -103,7 +199,8 @@ export const ChatPanel: React.FC = () => {
                     wordBreak: 'break-word'
                   }}
                 >
-                  {msg.content}
+                  <div>{msg.content}</div>
+                  {(msg as ChatMessageWithTool).toolResult ? renderToolBlock((msg as ChatMessageWithTool).toolResult as ToolResult) : null}
                 </div>
               </div>
             </List.Item>
