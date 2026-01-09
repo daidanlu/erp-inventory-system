@@ -5,6 +5,7 @@ import json
 import socket
 import urllib.request
 import urllib.error
+import re
 
 from django.shortcuts import get_object_or_404
 from datetime import timedelta, datetime, time
@@ -427,7 +428,12 @@ def _call_openai_compatible_chat(
 
 
 def _get_llm_provider() -> str:
-    return (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+    # Default to mock so the chat endpoint never silently falls back to placeholder when LLM_PROVIDER is unset in local dev.
+    p = (os.environ.get("LLM_PROVIDER") or "mock").strip().lower()
+    # tolerate common aliases
+    if p in ("openai-compatible", "openai_compatible", "openai"):
+        return "openai_compat"
+    return p
 
 
 def _tool_low_stock(args: dict) -> dict:
@@ -533,13 +539,33 @@ def generate_llm_reply(
         echo = user_message.replace("\n", " ").strip()
         if len(echo) > 120:
             echo = echo[:120] + "…"
-        if tool_result is not None:
-            tool_json = json.dumps(tool_result, ensure_ascii=False)
-            return (
-                f"[MOCK_LLM] tool={tool_name or 'none'} session={session_id} | echo=\"{echo}\"\n"
-                f"TOOL_RESULT={tool_json}\n"
-                f"Summary: (mock) See TOOL_RESULT above."
-            )
+
+        if tool_result is not None and isinstance(tool_result, dict):
+            t = tool_result.get("tool") or tool_name or "unknown"
+            if t == "orders_today":
+                total = int(tool_result.get("total") or 0)
+                date = tool_result.get("date") or ""
+                by = tool_result.get("by_status") or {}
+                # keep a compact breakdown string
+                if isinstance(by, dict) and by:
+                    parts = [f"{k}={by.get(k)}" for k in sorted(by.keys())]
+                    breakdown = ", ".join(parts)
+                    return (
+                        f"[MOCK_LLM] Orders today {date}: total {total} ({breakdown})."
+                    )
+                return f"[MOCK_LLM] Orders today {date}: total {total}."
+
+            if t == "low_stock":
+                threshold = int(tool_result.get("threshold") or 0)
+                total = int(tool_result.get("total") or 0)
+                returned = int(tool_result.get("returned") or 0)
+                if total == 0:
+                    return f"[MOCK_LLM] No products are at or below stock {threshold}."
+                return f"[MOCK_LLM] Found {total} low-stock products (≤ {threshold}); showing {returned}."
+
+            # Unknown tool: still keep it readable
+            return f'[MOCK_LLM] tool={t} session={session_id} | echo="{echo}"'
+
         return f'[MOCK_LLM] tool=none session={session_id} | echo="{echo}"'
 
     if provider != "openai_compat":
