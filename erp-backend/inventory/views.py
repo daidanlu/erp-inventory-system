@@ -674,6 +674,25 @@ def chat_with_bot(request):
         q = message.lower()
         if "low stock" in q or "low-stock" in q or "lowstock" in q or "库存" in q:
             tool = "low_stock"
+            # Parse simple args from natural language for better E2E testing.
+            # Examples:
+            #   "low stock 10" -> threshold=10
+            #   "threshold=8 limit=50" -> threshold=8, limit=50
+            if not isinstance(args, dict):
+                args = {}
+            # threshold=NUM
+            m = re.search(r"(?:threshold|th)\s*=?\s*(\d{1,4})", q)
+            if m:
+                args["threshold"] = int(m.group(1))
+            else:
+                # fallback: first standalone number (e.g. "low stock 10")
+                m2 = re.search(r"\b(\d{1,4})\b", q)
+                if m2:
+                    args["threshold"] = int(m2.group(1))
+            # limit=NUM
+            m = re.search(r"(?:limit|top)\s*=?\s*(\d{1,4})", q)
+            if m:
+                args["limit"] = int(m.group(1))
         elif (
             "orders today" in q
             or "today's orders" in q
