@@ -1,6 +1,8 @@
 import csv
+import os
 import threading
 import time
+from unittest.mock import patch
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -9,8 +11,9 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db import close_old_connections
 from django.db.utils import OperationalError
+from unittest.mock import patch
 
-from .models import Product, Order, OrderItem, Customer, StockMovement
+from .models import Product, Order, OrderItem, Customer, StockMovement, ChatMessage
 
 
 class OrderStockTests(TestCase):
@@ -605,3 +608,88 @@ class StockMovementTests(TestCase):
 
         movements = StockMovement.objects.filter(product=self.product)
         self.assertTrue(movements.exists())
+
+
+class ChatApiMockRoutingTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = "/api/chat/"
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_chat_creates_session_and_returns_history(self):
+        resp = self.client.post(self.url, {"message": "hello"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("session_id", data)
+        self.assertEqual(len(data["session_id"]), 32)  # uuid4().hex
+        self.assertIn("history", data)
+        self.assertEqual(len(data["history"]), 2)  # user + bot
+        self.assertIn("reply", data)
+        self.assertIn("tool_result", data)
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_chat_reuses_session_and_truncates_history_to_10(self):
+        # 6 turns => 12 messages stored; API should return last 10
+        session_id = None
+        for i in range(6):
+            payload = {"message": f"m{i}"}
+            if session_id:
+                payload["session_id"] = session_id
+            resp = self.client.post(self.url, payload, format="json")
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            session_id = data["session_id"]
+
+        resp = self.client.post(
+            self.url, {"session_id": session_id, "message": "final"}, format="json"
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertLessEqual(len(data["history"]), 10)
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_chat_rejects_empty_message(self):
+        resp = self.client.post(self.url, {"message": "   "}, format="json")
+        self.assertEqual(resp.status_code, 400)
+        body = resp.json()
+        self.assertIn("message", body)
+        self.assertTrue(body["message"])
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_mock_routes_low_stock_and_parses_threshold_limit(self):
+        # Prepare products: two are <=8, but limit=1 should cap returned
+        Product.objects.create(sku="LS-1", name="Low1", stock=1)
+        Product.objects.create(sku="LS-7", name="Low7", stock=7)
+        Product.objects.create(sku="OK-9", name="Ok9", stock=9)
+
+        resp = self.client.post(
+            self.url,
+            {"message": "show me low stock threshold=8 limit=1"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        tr = data["tool_result"]
+        self.assertEqual(tr["tool"], "low_stock")
+        self.assertEqual(tr["threshold"], 8)
+        self.assertLessEqual(tr["returned"], 1)
+        self.assertGreaterEqual(tr["total"], 2)
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_mock_routes_orders_today(self):
+        # Create some orders today
+        Order.objects.create(
+            customer_name="C1", status=Order.STATUS_DRAFT, created_at=timezone.now()
+        )
+        Order.objects.create(
+            customer_name="C2", status=Order.STATUS_CONFIRMED, created_at=timezone.now()
+        )
+
+        resp = self.client.post(self.url, {"message": "orders today"}, format="json")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        tr = data["tool_result"]
+        self.assertEqual(tr["tool"], "orders_today")
+        self.assertEqual(tr["total"], 2)
+        self.assertIn(Order.STATUS_DRAFT, tr["by_status"])
+        self.assertIn(Order.STATUS_CONFIRMED, tr["by_status"])
