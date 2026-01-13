@@ -2,7 +2,8 @@ import csv
 import os
 import threading
 import time
-from unittest.mock import patch
+import json
+from unittest.mock import patch, MagicMock
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
