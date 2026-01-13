@@ -14,6 +14,8 @@ from django.db.utils import OperationalError
 from unittest.mock import patch
 
 from .models import Product, Order, OrderItem, Customer, StockMovement, ChatMessage
+from unittest.mock import patch, MagicMock
+import io
 
 
 class OrderStockTests(TestCase):
@@ -708,3 +710,50 @@ class ChatApiLlamaCppProviderTests(TestCase):
         self.assertEqual(resp.status_code, 503)
         body = resp.json()
         self.assertIn("detail", body)
+
+
+class ChatApiOpenAICompatProviderTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = "/api/chat/"
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "openai_compat",
+            "LLM_BASE_URL": "http://fake-llm-server.com/v1",
+            "LLM_MODEL": "gpt-3.5-turbo",
+        },
+        clear=False,
+    )
+    def test_openai_compat_success(self, mock_urlopen):
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(
+            {"choices": [{"message": {"content": "Hello from fake LLM!"}}]}
+        ).encode("utf-8")
+        mock_response.__enter__.return_value = mock_response
+        mock_urlopen.return_value = mock_response
+
+        resp = self.client.post(self.url, {"message": "hi"}, format="json")
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["reply"], "Hello from fake LLM!")
+        self.assertEqual(ChatMessage.objects.count(), 2)
+
+    @patch("urllib.request.urlopen")
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "openai_compat",
+            "LLM_BASE_URL": "http://fake-llm-server.com/v1",
+        },
+        clear=False,
+    )
+    def test_openai_compat_503_on_connection_error(self, mock_urlopen):
+        mock_urlopen.side_effect = RuntimeError("LLM connection error")
+
+        resp = self.client.post(self.url, {"message": "hi"}, format="json")
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertIn("detail", resp.data)
