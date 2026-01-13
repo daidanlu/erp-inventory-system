@@ -1,6 +1,7 @@
 import csv
 import uuid
 import os
+import threading
 import json
 import socket
 import urllib.request
@@ -427,12 +428,92 @@ def _call_openai_compatible_chat(
     raise RuntimeError("LLM returned an empty response")
 
 
+# ---- llama-cpp-python in-process provider (GGUF) ----
+_LLAMA_CPP_INSTANCE = None
+_LLAMA_CPP_LOCK = threading.Lock()
+
+
+def _get_llama_cpp_instance():
+    """
+    Lazily initialize a llama-cpp-python Llama() instance.
+    Required env:
+      - LLM_GGUF_PATH: absolute/relative path to .gguf
+    Optional env:
+      - LLM_N_CTX (default 2048)
+      - LLM_THREADS (default 8)
+      - LLM_GPU_LAYERS (default 0)
+      - LLM_CHAT_FORMAT (optional; otherwise auto from GGUF metadata)
+    """
+    global _LLAMA_CPP_INSTANCE
+    if _LLAMA_CPP_INSTANCE is not None:
+        return _LLAMA_CPP_INSTANCE
+
+    model_path = (os.environ.get("LLM_GGUF_PATH") or "").strip()
+    if not model_path:
+        raise RuntimeError(
+            "LLM_PROVIDER=llama_cpp requires LLM_GGUF_PATH pointing to a .gguf file"
+        )
+    if not os.path.exists(model_path):
+        raise RuntimeError(f"LLM_GGUF_PATH not found: {model_path}")
+
+    try:
+        from llama_cpp import Llama
+    except Exception as e:
+        raise RuntimeError(
+            "llama-cpp-python is not installed. Install it (e.g., pip install llama-cpp-python) "
+            "or switch to LLM_PROVIDER=openai_compat with a running llama-server."
+        ) from e
+
+    n_ctx = int(os.environ.get("LLM_N_CTX", "2048"))
+    n_threads = int(os.environ.get("LLM_THREADS", "8"))
+    n_gpu_layers = int(os.environ.get("LLM_GPU_LAYERS", "0"))
+    chat_format = (os.environ.get("LLM_CHAT_FORMAT") or "").strip() or None
+
+    _LLAMA_CPP_INSTANCE = Llama(
+        model_path=model_path,
+        n_ctx=n_ctx,
+        n_threads=n_threads,
+        n_gpu_layers=n_gpu_layers,
+        chat_format=chat_format,
+        verbose=False,
+    )
+    return _LLAMA_CPP_INSTANCE
+
+
+def _call_llama_cpp_local_chat(*, messages: list[dict]) -> str:
+    llm = _get_llama_cpp_instance()
+    temperature = float(os.environ.get("LLM_TEMPERATURE", "0.2"))
+    max_tokens = int(os.environ.get("LLM_MAX_TOKENS", "256"))
+
+    with _LLAMA_CPP_LOCK:
+        out = llm.create_chat_completion(
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+
+    try:
+        choice0 = (out.get("choices") or [])[0]
+        msg = choice0.get("message") or {}
+        content = msg.get("content")
+        if content:
+            return str(content).strip()
+        text = choice0.get("text")
+        if text:
+            return str(text).strip()
+    except Exception:
+        pass
+    raise RuntimeError("LLM (llama_cpp) returned an empty response")
+
+
 def _get_llm_provider() -> str:
     # Default to mock so the chat endpoint never silently falls back to placeholder when LLM_PROVIDER is unset in local dev.
     p = (os.environ.get("LLM_PROVIDER") or "mock").strip().lower()
     # tolerate common aliases
     if p in ("openai-compatible", "openai_compatible", "openai"):
         return "openai_compat"
+    if p in ("llama_cpp", "llama-cpp", "llamacpp", "llama.cpp", "local_gguf"):
+        return "llama_cpp"
     return p
 
 
@@ -568,14 +649,17 @@ def generate_llm_reply(
 
         return f'[MOCK_LLM] tool=none session={session_id} | echo="{echo}"'
 
-    if provider != "openai_compat":
+    if provider not in ("openai_compat", "llama_cpp"):
         return simple_bot_reply(user_message)
 
-    base_url = os.environ.get("LLM_BASE_URL")
-    if not base_url:
-        raise RuntimeError(
-            "LLM_PROVIDER=openai_compat requires LLM_BASE_URL (e.g., http://127.0.0.1:8080/v1)"
-        )
+    if provider == "openai_compat":
+        base_url = os.environ.get("LLM_BASE_URL")
+        if not base_url:
+            raise RuntimeError(
+                "LLM_PROVIDER=openai_compat requires LLM_BASE_URL (e.g., http://127.0.0.1:8080/v1)"
+            )
+    else:
+        base_url = None
 
     model = os.environ.get("LLM_MODEL", "llama-3.2-1b")
     timeout_s = int(os.environ.get("LLM_TIMEOUT_SECONDS", "30"))
@@ -607,8 +691,11 @@ def generate_llm_reply(
     for m in recent:
         msgs.append({"role": _to_openai_role(m.role), "content": m.content})
 
+    if provider == "llama_cpp":
+        return _call_llama_cpp_local_chat(messages=msgs)
+
     return _call_openai_compatible_chat(
-        base_url=base_url,
+        base_url=str(base_url),
         model=model,
         messages=msgs,
         timeout_s=timeout_s,

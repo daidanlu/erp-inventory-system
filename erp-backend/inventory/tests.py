@@ -693,3 +693,18 @@ class ChatApiMockRoutingTests(TestCase):
         self.assertEqual(tr["total"], 2)
         self.assertIn(Order.STATUS_DRAFT, tr["by_status"])
         self.assertIn(Order.STATUS_CONFIRMED, tr["by_status"])
+
+
+class ChatApiLlamaCppProviderTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = "/api/chat/"
+
+    @patch.dict(
+        os.environ, {"LLM_PROVIDER": "llama_cpp", "LLM_GGUF_PATH": ""}, clear=False
+    )
+    def test_llama_cpp_requires_model_path(self):
+        resp = self.client.post(self.url, {"message": "hello"}, format="json")
+        self.assertEqual(resp.status_code, 503)
+        body = resp.json()
+        self.assertIn("detail", body)
