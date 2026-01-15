@@ -754,38 +754,29 @@ def chat_with_bot(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # If mock mode and no explicit tool provided, do a tiny keyword-based routing
-    # to simulate "LLM chooses a tool" without needing a model server.
+    # If mock mode and no explicit tool provided, do a tiny keyword-based routing to simulate "LLM chooses a tool" without needing a model server.
     provider = _get_llm_provider()
     if provider == "mock" and not tool:
         q = message.lower()
-        if "low stock" in q or "low-stock" in q or "lowstock" in q or "库存" in q:
+
+        if re.search(r"low[- ]?stock|stock.*low|库存", q):
             tool = "low_stock"
-            # Parse simple args from natural language for better E2E testing.
-            # Examples:
-            #   "low stock 10" -> threshold=10
-            #   "threshold=8 limit=50" -> threshold=8, limit=50
             if not isinstance(args, dict):
                 args = {}
-            # threshold=NUM
-            m = re.search(r"(?:threshold|th)\s*=?\s*(\d{1,4})", q)
+
+            m = re.search(r"(?:threshold|th|below|at|limit)\s*[:=]?\s*(\d{1,4})", q)
             if m:
                 args["threshold"] = int(m.group(1))
             else:
-                # fallback: first standalone number (e.g. "low stock 10")
                 m2 = re.search(r"\b(\d{1,4})\b", q)
                 if m2:
                     args["threshold"] = int(m2.group(1))
-            # limit=NUM
-            m = re.search(r"(?:limit|top)\s*=?\s*(\d{1,4})", q)
-            if m:
-                args["limit"] = int(m.group(1))
-        elif (
-            "orders today" in q
-            or "today's orders" in q
-            or "今日订单" in q
-            or "今天订单" in q
-        ):
+
+            m_limit = re.search(r"(?:max|limit|top)\s*[:=]?\s*(\d{1,4})", q)
+            if m_limit:
+                args["limit"] = int(m_limit.group(1))
+
+        elif re.search(r"order.*today|today.*order|今日订单|今天订单", q):
             tool = "orders_today"
 
     tool_result = None
