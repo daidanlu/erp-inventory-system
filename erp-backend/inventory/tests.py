@@ -3,7 +3,7 @@ import os
 import threading
 import time
 import json
-from unittest.mock import patch, MagicMock
+
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -12,10 +12,10 @@ from datetime import timedelta
 from django.utils import timezone
 from django.db import close_old_connections
 from django.db.utils import OperationalError
-from unittest.mock import patch
+from urllib.error import URLError
+from unittest.mock import MagicMock, patch
 
 from .models import Product, Order, OrderItem, Customer, StockMovement, ChatMessage
-from unittest.mock import patch, MagicMock
 import io
 
 
@@ -758,3 +758,69 @@ class ChatApiOpenAICompatProviderTests(TestCase):
 
         self.assertEqual(resp.status_code, 503)
         self.assertIn("detail", resp.data)
+
+
+class LlmHealthEndpointTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.url = "/api/chat/health/"
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_health_mock_ok(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["provider"], "mock")
+
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "openai_compat",
+            "LLM_BASE_URL": "http://127.0.0.1:8002/v1",
+            "LLM_MODEL": "x",
+        },
+        clear=False,
+    )
+    @patch("inventory.views.urllib.request.urlopen")
+    def test_health_openai_compat_ok(self, mock_urlopen):
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"object": "list", "data": [{"id": "m1"}, {"id": "m2"}]}
+                ).encode("utf-8")
+
+        mock_urlopen.return_value = _Resp()
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["provider"], "openai_compat")
+        self.assertIn("available_models", data)
+
+    @patch.dict(
+        os.environ,
+        {
+            "LLM_PROVIDER": "openai_compat",
+            "LLM_BASE_URL": "http://127.0.0.1:8002/v1",
+            "LLM_MODEL": "x",
+        },
+        clear=False,
+    )
+    @patch("inventory.views.urllib.request.urlopen", side_effect=URLError("boom"))
+    def test_health_openai_compat_unreachable_returns_503(self, _mock_urlopen):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 503)
+        self.assertIn("detail", resp.json())
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "llama_cpp"}, clear=False)
+    def test_health_llama_cpp_missing_path_returns_503(self):
+        resp = self.client.get(self.url)
+        self.assertEqual(resp.status_code, 503)
+        self.assertIn("detail", resp.json())

@@ -18,6 +18,7 @@ from inventory.views import (
     StockMovementViewSet,
     dashboard_summary,
     chat_with_bot,
+    llm_health,
 )
 
 router = routers.DefaultRouter()
@@ -35,6 +36,7 @@ urlpatterns = [
 
     path("api/dashboard/", dashboard_summary),
     path("api/", include(router.urls)),
+    path("api/chat/health/", llm_health, name="llm-health"),
     path("api/chat/", chat_with_bot, name="chat-with-bot"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

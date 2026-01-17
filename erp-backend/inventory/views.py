@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import csv
 import uuid
 import os
@@ -6,8 +8,11 @@ import json
 import socket
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse, urlunparse
 import re
 
+
+from pathlib import Path
 from django.shortcuts import get_object_or_404
 from datetime import timedelta, datetime, time
 
@@ -404,7 +409,13 @@ def _call_openai_compatible_chat(
             body = ""
         raise RuntimeError(f"LLM HTTP {e.code}: {body or e.reason}") from e
     except (urllib.error.URLError, socket.timeout) as e:
-        raise RuntimeError(f"LLM connection error: {e}") from e
+        hint = (
+            "If you're on Windows, avoid IPv6 localhost issues: "
+            "set LLM_BASE_URL to 'http://127.0.0.1:8002/v1' (or without /v1; backend will normalize)."
+        )
+        raise RuntimeError(
+            f"LLM connection error: {e}. base_url={base_url}. {hint}"
+        ) from e
 
     try:
         obj = json.loads(raw)
@@ -426,6 +437,32 @@ def _call_openai_compatible_chat(
         pass
 
     raise RuntimeError("LLM returned an empty response")
+
+
+def _normalize_openai_base_url(raw: str) -> str:
+    """
+    Accept common user inputs and normalize to an OpenAI-compatible base URL ending with /v1.
+    Examples accepted:
+      - http://localhost:8002
+      - http://localhost:8002/v1
+      - http://127.0.0.1:8002
+      - 127.0.0.1:8002
+    Output:
+      - http://127.0.0.1:8002/v1   (or https://... accordingly)
+    """
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith(("http://", "https://")):
+        raw = "http://" + raw
+
+    p = urlparse(raw)
+    netloc = p.netloc.replace("localhost", "127.0.0.1")
+    path = (p.path or "").rstrip("/")
+    if not path.endswith("/v1"):
+        path = (path + "/v1") if path else "/v1"
+
+    return urlunparse((p.scheme, netloc, path, "", "", ""))
 
 
 # ---- llama-cpp-python in-process provider (GGUF) ----
@@ -658,6 +695,8 @@ def generate_llm_reply(
             raise RuntimeError(
                 "LLM_PROVIDER=openai_compat requires LLM_BASE_URL (e.g., http://127.0.0.1:8080/v1)"
             )
+        if provider == "openai_compat":
+            base_url = _normalize_openai_base_url(str(base_url))
     else:
         base_url = None
 
@@ -834,4 +873,52 @@ def chat_with_bot(request):
             "history": history,
         },
         status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def llm_health(request):
+    provider = _get_llm_provider()
+
+    if provider == "mock":
+        return Response({"ok": True, "provider": "mock"})
+
+    if provider == "llama_cpp":
+        try:
+            _get_llama_cpp_instance()
+            return Response({"ok": True, "provider": "llama_cpp"})
+        except Exception as e:
+            return Response(
+                {"ok": False, "detail": str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    if provider == "openai_compat":
+        base_url = os.environ.get("LLM_BASE_URL")
+        if not base_url:
+            return Response(
+                {"ok": False, "detail": "LLM_BASE_URL not set"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        normalized_url = _normalize_openai_base_url(base_url)
+
+        models_url = f"{normalized_url.rstrip('/')}/models"
+        try:
+            req = urllib.request.Request(models_url, method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                return Response(
+                    {"ok": True, "provider": "openai_compat", "available_models": data}
+                )
+        except Exception as e:
+            return Response(
+                {"ok": False, "detail": str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    return Response(
+        {"ok": False, "detail": f"Unknown provider: {provider}"},
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
     )
