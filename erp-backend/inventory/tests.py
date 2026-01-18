@@ -814,7 +814,8 @@ class LlmHealthEndpointTests(TestCase):
         clear=False,
     )
     @patch("inventory.views.urllib.request.urlopen", side_effect=URLError("boom"))
-    def test_health_openai_compat_unreachable_returns_503(self, _mock_urlopen):
+    @patch("inventory.views.urlopen", side_effect=URLError("boom"), create=True)
+    def test_health_openai_compat_unreachable_returns_503(self, _mock_urlopen2, _mock_urlopen1):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 503)
         self.assertIn("detail", resp.json())

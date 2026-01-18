@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import time as pytime
 import uuid
 import os
 import threading
@@ -896,28 +897,66 @@ def llm_health(request):
 
     if provider == "openai_compat":
         base_url = os.environ.get("LLM_BASE_URL")
+        model = os.environ.get("LLM_MODEL", "")
         if not base_url:
             return Response(
-                {"ok": False, "detail": "LLM_BASE_URL not set"},
+                {
+                    "ok": False,
+                    "provider": "openai_compat",
+                    "error_type": "config_error",
+                    "detail": "LLM_BASE_URL not set",
+                },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
         normalized_url = _normalize_openai_base_url(base_url)
 
         models_url = f"{normalized_url.rstrip('/')}/models"
+        t0 = pytime.perf_counter()
+        req = urllib.request.Request(models_url, method="GET")
         try:
-            req = urllib.request.Request(models_url, method="GET")
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
-                return Response(
-                    {"ok": True, "provider": "openai_compat", "available_models": data}
-                )
-        except Exception as e:
+            latency_ms = int((pytime.perf_counter() - t0) * 1000)
             return Response(
-                {"ok": False, "detail": str(e)},
+                {
+                    "ok": True,
+                    "provider": "openai_compat",
+                    "base_url": normalized_url,
+                    "model": model,
+                    "latency_ms": latency_ms,
+                    "available_models": data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except (urllib.error.URLError, socket.timeout) as e:
+            latency_ms = int((pytime.perf_counter() - t0) * 1000)
+            return Response(
+                {
+                    "ok": False,
+                    "provider": "openai_compat",
+                    "base_url": normalized_url,
+                    "model": model,
+                    "latency_ms": latency_ms,
+                    "error_type": "connection_error",
+                    "detail": str(e),
+                },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-
+        except Exception as e:
+            latency_ms = int((pytime.perf_counter() - t0) * 1000)
+            return Response(
+                {
+                    "ok": False,
+                    "provider": "openai_compat",
+                    "base_url": normalized_url,
+                    "model": model,
+                    "latency_ms": latency_ms,
+                    "error_type": "unknown_error",
+                    "detail": str(e),
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
     return Response(
         {"ok": False, "detail": f"Unknown provider: {provider}"},
         status=status.HTTP_503_SERVICE_UNAVAILABLE,
