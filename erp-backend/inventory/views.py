@@ -898,6 +898,7 @@ def llm_health(request):
     if provider == "openai_compat":
         base_url = os.environ.get("LLM_BASE_URL")
         model = os.environ.get("LLM_MODEL", "")
+        timeout_s = 5
         if not base_url:
             return Response(
                 {
@@ -915,7 +916,7 @@ def llm_health(request):
         t0 = pytime.perf_counter()
         req = urllib.request.Request(models_url, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             latency_ms = int((pytime.perf_counter() - t0) * 1000)
             return Response(
@@ -925,6 +926,8 @@ def llm_health(request):
                     "base_url": normalized_url,
                     "model": model,
                     "latency_ms": latency_ms,
+                    "checked_url": models_url,
+                    "timeout_s": timeout_s,
                     "available_models": data,
                 },
                 status=status.HTTP_200_OK,
@@ -938,8 +941,11 @@ def llm_health(request):
                     "base_url": normalized_url,
                     "model": model,
                     "latency_ms": latency_ms,
+                    "checked_url": models_url,
+                    "timeout_s": timeout_s,
                     "error_type": "connection_error",
                     "detail": str(e),
+                    "hint": "Start the OpenAI-compatible LLM server and verify LLM_BASE_URL (use 127.0.0.1 on Windows).",
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
@@ -952,8 +958,11 @@ def llm_health(request):
                     "base_url": normalized_url,
                     "model": model,
                     "latency_ms": latency_ms,
+                    "checked_url": models_url,
+                    "timeout_s": timeout_s,
                     "error_type": "unknown_error",
                     "detail": str(e),
+                     "hint": "Unexpected error while checking /v1/models; inspect server logs and configuration.",
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
