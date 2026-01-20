@@ -20,7 +20,7 @@ from datetime import timedelta, datetime, time
 from django.http import HttpResponse
 from django.db import transaction
 from django.utils import timezone
-from django.db.models import Sum
+from django.db.models import Sum, Max, OuterRef, Subquery
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, filters
@@ -879,6 +879,83 @@ def chat_with_bot(request):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+def chat_sessions(request):
+    """
+    List chat sessions ordered by most recent activity.
+
+    Response item:
+      - session_id
+      - last_role
+      - last_message
+      - last_time
+    """
+    # Subquery to fetch latest message fields per session_id (works on SQLite test DB too)
+    latest_qs = (
+        ChatMessage.objects.filter(session_id=OuterRef("session_id"))
+        .order_by("-created_at")
+        .values("content")[:1]
+    )
+    latest_role_qs = (
+        ChatMessage.objects.filter(session_id=OuterRef("session_id"))
+        .order_by("-created_at")
+        .values("role")[:1]
+    )
+
+    qs = (
+        ChatMessage.objects.values("session_id")
+        .annotate(
+            last_time=Max("created_at"),
+            last_message=Subquery(latest_qs),
+            last_role=Subquery(latest_role_qs),
+        )
+        .order_by("-last_time")
+    )
+
+    try:
+        limit = int(request.query_params.get("limit", 20))
+    except ValueError:
+        limit = 20
+    limit = max(1, min(limit, 200))
+
+    return Response(list(qs[:limit]), status=status.HTTP_200_OK)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def chat_history(request):
+    """
+    Fetch chat history for a given session_id.
+    Query params:
+      - session_id (required)
+      - limit (optional, default 50, max 200)
+    """
+    session_id = (request.query_params.get("session_id") or "").strip()
+    if not session_id:
+        return Response(
+            {"detail": "session_id is required"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        limit = int(request.query_params.get("limit", 50))
+    except ValueError:
+        limit = 50
+    limit = max(1, min(limit, 200))
+
+    qs = ChatMessage.objects.filter(session_id=session_id).order_by("-created_at")[
+        :limit
+    ]
+    # return chronological order for UI rendering
+    msgs = list(qs)[::-1]
+    data = ChatMessageSerializer(msgs, many=True).data
+    return Response(
+        {"session_id": session_id, "count": len(data), "messages": data},
+        status=status.HTTP_200_OK,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
 def llm_health(request):
     provider = _get_llm_provider()
 
@@ -962,7 +1039,7 @@ def llm_health(request):
                     "timeout_s": timeout_s,
                     "error_type": "unknown_error",
                     "detail": str(e),
-                     "hint": "Unexpected error while checking /v1/models; inspect server logs and configuration.",
+                    "hint": "Unexpected error while checking /v1/models; inspect server logs and configuration.",
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )

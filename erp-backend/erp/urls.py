@@ -18,6 +18,8 @@ from inventory.views import (
     StockMovementViewSet,
     dashboard_summary,
     chat_with_bot,
+    chat_sessions,
+    chat_history,
     llm_health,
 )
 
@@ -30,14 +32,14 @@ router.register(r"stock-movements", StockMovementViewSet, basename="stock-moveme
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api-auth/", include("rest_framework.urls")),
-    
     path("api/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("api/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-
     path("api/dashboard/", dashboard_summary),
     path("api/", include(router.urls)),
-    path("api/chat/health/", llm_health, name="llm-health"),
     path("api/chat/", chat_with_bot, name="chat-with-bot"),
+    path("api/chat/sessions/", chat_sessions, name="chat-sessions"),
+    path("api/chat/history/", chat_history, name="chat-history"),
+    path("api/chat/health/", llm_health, name="llm-health"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",
