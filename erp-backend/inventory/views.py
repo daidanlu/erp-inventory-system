@@ -928,6 +928,7 @@ def chat_history(request):
     Query params:
       - session_id (required)
       - limit (optional, default 50, max 200)
+      - order (optional, asc|desc, default asc)
     """
     session_id = (request.query_params.get("session_id") or "").strip()
     if not session_id:
@@ -942,14 +943,28 @@ def chat_history(request):
         limit = 50
     limit = max(1, min(limit, 200))
 
-    qs = ChatMessage.objects.filter(session_id=session_id).order_by("-created_at")[
-        :limit
-    ]
-    # return chronological order for UI rendering
-    msgs = list(qs)[::-1]
+    order = (request.query_params.get("order") or "asc").strip().lower()
+    if order not in ("asc", "desc"):
+        order = "asc"
+
+    base_qs = ChatMessage.objects.filter(session_id=session_id)
+    if not base_qs.exists():
+        return Response(
+            {"detail": "session not found", "session_id": session_id},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if order == "desc":
+        qs = base_qs.order_by("-created_at")[:limit]
+        msgs = list(qs)
+    else:
+        # default asc
+        qs = base_qs.order_by("-created_at")[:limit]
+        msgs = list(qs)[::-1]
+
     data = ChatMessageSerializer(msgs, many=True).data
     return Response(
-        {"session_id": session_id, "count": len(data), "messages": data},
+        {"session_id": session_id, "count": len(data), "order": order, "messages": data},
         status=status.HTTP_200_OK,
     )
 

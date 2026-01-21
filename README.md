@@ -1029,3 +1029,8 @@ if ($RunServer) {
     ```
 
     > If your Postgres host port is still 5432, run: `.\scripts\dev.ps1 -DbPort 5432 -RunServer`
+
+
+### Notes / Disclosure
+Built and validated by the author. AI coding assistants were used as auxiliary tools during development (debugging/refactoring/productivity).
+

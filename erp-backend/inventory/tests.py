@@ -740,6 +740,29 @@ class ChatSessionEndpointsTests(TestCase):
         self.assertIn("messages", payload)
         self.assertGreaterEqual(payload["count"], 2)
 
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_history_unknown_session_returns_404(self):
+        resp = self.client.get(self.history_url, {"session_id": "does-not-exist"})
+        self.assertEqual(resp.status_code, 404)
+        self.assertIn("detail", resp.json())
+
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_history_limit_and_order(self):
+        r = self.client.post(self.chat_url, {"message": "m1"}, format="json")
+        sid = r.json()["session_id"]
+        self.client.post(self.chat_url, {"message": "m2"}, format="json")
+
+        asc = self.client.get(self.history_url, {"session_id": sid, "limit": 2, "order": "asc"})
+        self.assertEqual(asc.status_code, 200)
+        msgs = asc.json()["messages"]
+        self.assertEqual(len(msgs), 2)
+        self.assertEqual(msgs[0]["role"], "user")
+
+        desc = self.client.get(self.history_url, {"session_id": sid, "limit": 2, "order": "desc"})
+        self.assertEqual(desc.status_code, 200)
+        msgs2 = desc.json()["messages"]
+        self.assertEqual(len(msgs2), 2)
+
 
 class ChatApiLlamaCppProviderTests(TestCase):
     def setUp(self):
