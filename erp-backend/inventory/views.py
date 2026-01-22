@@ -9,6 +9,7 @@ import json
 import socket
 import urllib.request
 import urllib.error
+from urllib.request import urlopen
 from urllib.parse import urlparse, urlunparse
 import re
 
@@ -400,7 +401,7 @@ def _call_openai_compatible_chat(
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+        with urlopen(req, timeout=timeout_s) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         # propagate a readable error upwards
@@ -876,6 +877,13 @@ def chat_with_bot(request):
         status=status.HTTP_200_OK,
     )
 
+def _env(name: str, default: str | None = None) -> str | None:
+    """Read an env var, treating empty/whitespace as missing."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    val = raw.strip()
+    return val if val else default
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
@@ -1008,7 +1016,7 @@ def llm_health(request):
         t0 = pytime.perf_counter()
         req = urllib.request.Request(models_url, method="GET")
         try:
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            with urlopen(req, timeout=timeout_s) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
             latency_ms = int((pytime.perf_counter() - t0) * 1000)
             return Response(

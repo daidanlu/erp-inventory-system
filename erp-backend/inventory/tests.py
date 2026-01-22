@@ -752,13 +752,17 @@ class ChatSessionEndpointsTests(TestCase):
         sid = r.json()["session_id"]
         self.client.post(self.chat_url, {"message": "m2"}, format="json")
 
-        asc = self.client.get(self.history_url, {"session_id": sid, "limit": 2, "order": "asc"})
+        asc = self.client.get(
+            self.history_url, {"session_id": sid, "limit": 2, "order": "asc"}
+        )
         self.assertEqual(asc.status_code, 200)
         msgs = asc.json()["messages"]
         self.assertEqual(len(msgs), 2)
         self.assertEqual(msgs[0]["role"], "user")
 
-        desc = self.client.get(self.history_url, {"session_id": sid, "limit": 2, "order": "desc"})
+        desc = self.client.get(
+            self.history_url, {"session_id": sid, "limit": 2, "order": "desc"}
+        )
         self.assertEqual(desc.status_code, 200)
         msgs2 = desc.json()["messages"]
         self.assertEqual(len(msgs2), 2)
@@ -784,7 +788,7 @@ class ChatApiOpenAICompatProviderTests(TestCase):
         self.client = APIClient()
         self.url = "/api/chat/"
 
-    @patch("urllib.request.urlopen")
+    @patch("inventory.views.urlopen")
     @patch.dict(
         os.environ,
         {
@@ -808,7 +812,7 @@ class ChatApiOpenAICompatProviderTests(TestCase):
         self.assertEqual(resp.data["reply"], "Hello from fake LLM!")
         self.assertEqual(ChatMessage.objects.count(), 2)
 
-    @patch("urllib.request.urlopen")
+    @patch("inventory.views.urlopen")
     @patch.dict(
         os.environ,
         {
@@ -848,7 +852,7 @@ class LlmHealthEndpointTests(TestCase):
         },
         clear=False,
     )
-    @patch("inventory.views.urllib.request.urlopen")
+    @patch("inventory.views.urlopen")
     def test_health_openai_compat_ok(self, mock_urlopen):
         class _Resp:
             def __enter__(self):
@@ -879,11 +883,8 @@ class LlmHealthEndpointTests(TestCase):
         },
         clear=False,
     )
-    @patch("inventory.views.urllib.request.urlopen", side_effect=URLError("boom"))
-    @patch("inventory.views.urlopen", side_effect=URLError("boom"), create=True)
-    def test_health_openai_compat_unreachable_returns_503(
-        self, _mock_urlopen2, _mock_urlopen1
-    ):
+    @patch("inventory.views.urlopen", side_effect=URLError("boom"))
+    def test_health_openai_compat_unreachable_returns_503(self, _mock_urlopen):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 503)
         self.assertIn("detail", resp.json())
