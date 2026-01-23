@@ -30,7 +30,15 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly, AllowAny
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
-from .models import Product, Order, Customer, OrderItem, StockMovement, ChatMessage, ChatSession
+from .models import (
+    Product,
+    Order,
+    Customer,
+    OrderItem,
+    StockMovement,
+    ChatMessage,
+    ChatSession,
+)
 from .serializers import (
     ProductSerializer,
     CustomerSerializer,
@@ -765,6 +773,7 @@ def simple_bot_reply(message: str) -> str:
         "connected to Rasa/Botpress later."
     )
 
+
 def _generate_simple_summary(text: str) -> str:
     """Get first 30 characters"""
     summary = text.replace("\n", " ").strip()
@@ -772,26 +781,25 @@ def _generate_simple_summary(text: str) -> str:
         return summary[:30] + "..."
     return summary
 
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def chat_with_bot(request):
     """
     Minimal chat endpoint for the ERP.
-
-    Request body:
-      - session_id (optional, string)
-      - message (required, string)
-
-    Response:
-      - session_id: the conversation id (reused if provided)
-      - reply: bot reply text
-      - history: recent messages in this session
+    Supports 'dry_run' to test intent parsing without saving data.
     """
     serializer = ChatRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
 
     session_id = serializer.validated_data.get("session_id") or uuid.uuid4().hex
     message = serializer.validated_data["message"].strip()
+    
+    # 1. get dry_run flag
+    # allow JSON boolean true or string "true"
+    raw_dry_run = request.data.get("dry_run", False)
+    is_dry_run = raw_dry_run is True or str(raw_dry_run).lower() == "true"
+
     tool = request.data.get("tool")
     args = request.data.get("args") or {}
 
@@ -801,31 +809,51 @@ def chat_with_bot(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    # If mock mode and no explicit tool provided, do a tiny keyword-based routing to simulate "LLM chooses a tool" without needing a model server.
+    # 2. Intent Parsing using Regex
     provider = _get_llm_provider()
-    if provider == "mock" and not tool:
+    
+    if (provider == "mock" or is_dry_run) and not tool:
         q = message.lower()
 
+        # Regex Logic for Low Stock
         if re.search(r"low[- ]?stock|stock.*low|库存", q):
             tool = "low_stock"
             if not isinstance(args, dict):
                 args = {}
 
+            # Parse threshold
             m = re.search(r"(?:threshold|th|below|at|limit)\s*[:=]?\s*(\d{1,4})", q)
             if m:
                 args["threshold"] = int(m.group(1))
             else:
+                # fallback: find any standalone number
                 m2 = re.search(r"\b(\d{1,4})\b", q)
                 if m2:
                     args["threshold"] = int(m2.group(1))
 
+            # Parse limit
             m_limit = re.search(r"(?:max|limit|top)\s*[:=]?\s*(\d{1,4})", q)
             if m_limit:
                 args["limit"] = int(m_limit.group(1))
 
+        # Regex Logic for Orders Today
         elif re.search(r"order.*today|today.*order|今日订单|今天订单", q):
             tool = "orders_today"
 
+    # 3. Handle Dry Run (Early Return)
+    # if dry_run, return directly, no save db and run tool steps
+    if is_dry_run:
+        return Response({
+            "dry_run": True,
+            "session_id": session_id,
+            "message": message,
+            "parsed_intent": tool,  # "low_stock", "orders_today" or None
+            "parsed_args": args,
+            "tool_exists": tool in TOOLS_REGISTRY if tool else False,
+            "would_execute": bool(tool)
+        }, status=status.HTTP_200_OK)
+
+    # normal execution (Save DB -> Run Tool -> Reply)
     tool_result = None
     tool_name = None
     if tool:
@@ -845,16 +873,14 @@ def chat_with_bot(request):
         content=message,
     )
 
-    # This ensures the real-time nature of the session list data and the existence of the summary.
+    # Update Session Metadata
     chat_session, created = ChatSession.objects.get_or_create(session_id=session_id)
     chat_session.last_message_at = timezone.now()
-
     if not chat_session.summary:
         chat_session.summary = _generate_simple_summary(message)
-    
     chat_session.save()
 
-    # generate bot reply (LLM if configured; otherwise placeholder fallback)
+    # generate bot reply
     try:
         reply_text = generate_llm_reply(
             session_id=session_id,
@@ -874,7 +900,7 @@ def chat_with_bot(request):
         content=reply_text,
     )
 
-    # return recent history for this session
+    # return recent history
     recent_messages = ChatMessage.objects.filter(session_id=session_id).order_by(
         "-created_at"
     )[:10]
@@ -900,6 +926,7 @@ def _env(name: str, default: str | None = None) -> str | None:
     val = raw.strip()
     return val if val else default
 
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def chat_sessions(request):
@@ -918,11 +945,13 @@ def chat_sessions(request):
 
     data = []
     for s in sessions:
-        data.append({
-            "session_id": s.session_id,
-            "summary": s.summary,
-            "last_time": s.last_message_at,
-        })
+        data.append(
+            {
+                "session_id": s.session_id,
+                "summary": s.summary,
+                "last_time": s.last_message_at,
+            }
+        )
 
     return Response(data, status=status.HTTP_200_OK)
 
@@ -972,7 +1001,12 @@ def chat_history(request):
 
     data = ChatMessageSerializer(msgs, many=True).data
     return Response(
-        {"session_id": session_id, "count": len(data), "order": order, "messages": data},
+        {
+            "session_id": session_id,
+            "count": len(data),
+            "order": order,
+            "messages": data,
+        },
         status=status.HTTP_200_OK,
     )
 
@@ -982,8 +1016,38 @@ def chat_history(request):
 def llm_health(request):
     provider = request.query_params.get("provider") or _get_llm_provider()
 
+    mode = "remote"
+    if provider in ("mock", "llama_cpp"):
+        mode = "local"
+
+    env_mode = (
+        "development" if os.environ.get("DJANGO_ENV") != "production" else "production"
+    )
+
+    common_data = {
+        "ok": True,
+        "provider": provider,
+        "mode": mode,
+        "environment": env_mode,
+    }
+
     if provider == "mock":
-        return Response({"ok": True, "provider": "mock"})
+        return Response(common_data)
+
+    if provider == "llama_cpp":
+        try:
+            _get_llama_cpp_instance()
+            return Response(common_data)
+        except Exception as e:
+            return Response(
+                {"ok": False, "detail": str(e)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    if provider == "openai_compat":
+        base_url = request.query_params.get("base_url") or os.environ.get(
+            "LLM_BASE_URL"
+        )
 
     if provider == "llama_cpp":
         try:
@@ -996,7 +1060,9 @@ def llm_health(request):
             )
 
     if provider == "openai_compat":
-        base_url = request.query_params.get("base_url") or os.environ.get("LLM_BASE_URL")
+        base_url = request.query_params.get("base_url") or os.environ.get(
+            "LLM_BASE_URL"
+        )
         model = request.query_params.get("model") or os.environ.get("LLM_MODEL", "")
         timeout_s = 5
         if not base_url:
