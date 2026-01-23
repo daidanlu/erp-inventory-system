@@ -30,7 +30,7 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly, AllowAny
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
-from .models import Product, Order, Customer, OrderItem, StockMovement, ChatMessage
+from .models import Product, Order, Customer, OrderItem, StockMovement, ChatMessage, ChatSession
 from .serializers import (
     ProductSerializer,
     CustomerSerializer,
@@ -765,6 +765,12 @@ def simple_bot_reply(message: str) -> str:
         "connected to Rasa/Botpress later."
     )
 
+def _generate_simple_summary(text: str) -> str:
+    """Get first 30 characters"""
+    summary = text.replace("\n", " ").strip()
+    if len(summary) > 30:
+        return summary[:30] + "..."
+    return summary
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
@@ -839,6 +845,15 @@ def chat_with_bot(request):
         content=message,
     )
 
+    # This ensures the real-time nature of the session list data and the existence of the summary.
+    chat_session, created = ChatSession.objects.get_or_create(session_id=session_id)
+    chat_session.last_message_at = timezone.now()
+
+    if not chat_session.summary:
+        chat_session.summary = _generate_simple_summary(message)
+    
+    chat_session.save()
+
     # generate bot reply (LLM if configured; otherwise placeholder fallback)
     try:
         reply_text = generate_llm_reply(
@@ -889,43 +904,27 @@ def _env(name: str, default: str | None = None) -> str | None:
 @permission_classes([AllowAny])
 def chat_sessions(request):
     """
-    List chat sessions ordered by most recent activity.
-
-    Response item:
-      - session_id
-      - last_role
-      - last_message
-      - last_time
+    List chat sessions from the metadata table.
     """
-    # Subquery to fetch latest message fields per session_id (works on SQLite test DB too)
-    latest_qs = (
-        ChatMessage.objects.filter(session_id=OuterRef("session_id"))
-        .order_by("-created_at")
-        .values("content")[:1]
-    )
-    latest_role_qs = (
-        ChatMessage.objects.filter(session_id=OuterRef("session_id"))
-        .order_by("-created_at")
-        .values("role")[:1]
-    )
-
-    qs = (
-        ChatMessage.objects.values("session_id")
-        .annotate(
-            last_time=Max("created_at"),
-            last_message=Subquery(latest_qs),
-            last_role=Subquery(latest_role_qs),
-        )
-        .order_by("-last_time")
-    )
-
+    # 1. get limit params
     try:
         limit = int(request.query_params.get("limit", 20))
-    except ValueError:
+    except (ValueError, TypeError):
         limit = 20
     limit = max(1, min(limit, 200))
 
-    return Response(list(qs[:limit]), status=status.HTTP_200_OK)
+    # 2. search from ChatSession, ordered by last message time
+    sessions = ChatSession.objects.all().order_by("-last_message_at")[:limit]
+
+    data = []
+    for s in sessions:
+        data.append({
+            "session_id": s.session_id,
+            "summary": s.summary,
+            "last_time": s.last_message_at,
+        })
+
+    return Response(data, status=status.HTTP_200_OK)
 
 
 @api_view(["GET"])
@@ -963,11 +962,12 @@ def chat_history(request):
         )
 
     if order == "desc":
-        qs = base_qs.order_by("-created_at")[:limit]
+        # Descending order: Newer entries come first, and entries with larger IDs come first.
+        qs = base_qs.order_by("-created_at", "-id")[:limit]
         msgs = list(qs)
     else:
-        # default asc
-        qs = base_qs.order_by("-created_at")[:limit]
+        # Ascending order: First, retrieve the latest N items in descending order, then reverse the order.
+        qs = base_qs.order_by("-created_at", "-id")[:limit]
         msgs = list(qs)[::-1]
 
     data = ChatMessageSerializer(msgs, many=True).data
@@ -980,7 +980,7 @@ def chat_history(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def llm_health(request):
-    provider = _get_llm_provider()
+    provider = request.query_params.get("provider") or _get_llm_provider()
 
     if provider == "mock":
         return Response({"ok": True, "provider": "mock"})
@@ -996,8 +996,8 @@ def llm_health(request):
             )
 
     if provider == "openai_compat":
-        base_url = os.environ.get("LLM_BASE_URL")
-        model = os.environ.get("LLM_MODEL", "")
+        base_url = request.query_params.get("base_url") or os.environ.get("LLM_BASE_URL")
+        model = request.query_params.get("model") or os.environ.get("LLM_MODEL", "")
         timeout_s = 5
         if not base_url:
             return Response(

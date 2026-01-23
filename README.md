@@ -497,7 +497,42 @@ Function view: `chat_with_bot`
 
 This is a placeholder endpoint that can later be wired to a real LLM / NLU backend.
 
----
+ ---
+
+ ## AI Chat Module
+
+ This project includes a lightweight AI-assisted chat interface designed for ERP-style queries.
+
+ ### Supported Modes
+
+ - `mock` – deterministic local testing (default)
+ - `openai_compat` – compatible with OpenAI-style APIs or local LLM servers
+ - `llama.cpp` – optional local GGUF inference (experimental)
+
+ ### Health Check Endpoint
+
+ `GET /api/chat/health/`
+
+ Returns the current LLM backend status:
+
+ Example response:
+
+ ```json
+ {
+   "ok": false,
+   "provider": "openai_compat",
+   "base_url": "[http://127.0.0.1:8002/v1](http://127.0.0.1:8002/v1)",
+   "error_type": "connection_error"
+ }
+ ```
+
+ This endpoint is used for:
+
+ - runtime diagnostics
+ - deployment validation
+ - CI testing
+
+  ---
 
 ## Frontend (High‑Level)
 

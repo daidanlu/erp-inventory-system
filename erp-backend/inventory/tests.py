@@ -894,3 +894,18 @@ class LlmHealthEndpointTests(TestCase):
         resp = self.client.get(self.url)
         self.assertEqual(resp.status_code, 503)
         self.assertIn("detail", resp.json())
+
+    def test_chat_creates_session_summary(self):
+        # 1. Send a long message
+        long_msg = "Please check the stock level for the new Samsung Galaxy S24 Ultra immediately"
+        self.client.post("/api/chat/", {"message": long_msg}, format="json")
+
+        # 2. Fetch sessions
+        resp = self.client.get("/api/chat/sessions/")
+        data = resp.json()
+
+        # 3. Verify summary generation
+        self.assertTrue(len(data) > 0)
+        latest = data[0]
+        self.assertTrue(latest["summary"].startswith("Please check the stock"))
+        self.assertTrue(len(latest["summary"]) <= 33)  # 30 chars + "..."

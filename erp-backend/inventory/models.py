@@ -104,6 +104,15 @@ class StockMovement(models.Model):
     def __str__(self):
         return f"{self.product.sku}: {self.previous_stock} -> {self.new_stock} ({self.reason})"
 
+class ChatSession(models.Model):
+    session_id = models.CharField(max_length=50, unique=True, db_index=True)
+    # summary, e.g. "Consulting low stock products"
+    summary = models.CharField(max_length=200, blank=True)
+    # ordered by time
+    last_message_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.session_id} ({self.summary})"
 
 class ChatMessage(models.Model):
     ROLE_USER = "user"
