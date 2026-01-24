@@ -21,6 +21,7 @@ from inventory.views import (
     chat_sessions,
     chat_history,
     llm_health,
+    chat_config,
 )
 
 router = routers.DefaultRouter()
@@ -40,6 +41,7 @@ urlpatterns = [
     path("api/chat/sessions/", chat_sessions, name="chat-sessions"),
     path("api/chat/history/", chat_history, name="chat-history"),
     path("api/chat/health/", llm_health, name="llm-health"),
+    path("api/chat/config/", chat_config, name="chat-config"),
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
         "api/docs/",

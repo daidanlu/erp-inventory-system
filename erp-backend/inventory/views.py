@@ -794,7 +794,7 @@ def chat_with_bot(request):
 
     session_id = serializer.validated_data.get("session_id") or uuid.uuid4().hex
     message = serializer.validated_data["message"].strip()
-    
+
     # 1. get dry_run flag
     # allow JSON boolean true or string "true"
     raw_dry_run = request.data.get("dry_run", False)
@@ -811,7 +811,7 @@ def chat_with_bot(request):
 
     # 2. Intent Parsing using Regex
     provider = _get_llm_provider()
-    
+
     if (provider == "mock" or is_dry_run) and not tool:
         q = message.lower()
 
@@ -843,15 +843,18 @@ def chat_with_bot(request):
     # 3. Handle Dry Run (Early Return)
     # if dry_run, return directly, no save db and run tool steps
     if is_dry_run:
-        return Response({
-            "dry_run": True,
-            "session_id": session_id,
-            "message": message,
-            "parsed_intent": tool,  # "low_stock", "orders_today" or None
-            "parsed_args": args,
-            "tool_exists": tool in TOOLS_REGISTRY if tool else False,
-            "would_execute": bool(tool)
-        }, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "dry_run": True,
+                "session_id": session_id,
+                "message": message,
+                "parsed_intent": tool,  # "low_stock", "orders_today" or None
+                "parsed_args": args,
+                "tool_exists": tool in TOOLS_REGISTRY if tool else False,
+                "would_execute": bool(tool),
+            },
+            status=status.HTTP_200_OK,
+        )
 
     # normal execution (Save DB -> Run Tool -> Reply)
     tool_result = None
@@ -917,6 +920,7 @@ def chat_with_bot(request):
         },
         status=status.HTTP_200_OK,
     )
+
 
 def _env(name: str, default: str | None = None) -> str | None:
     """Read an env var, treating empty/whitespace as missing."""
@@ -1014,62 +1018,59 @@ def chat_history(request):
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def llm_health(request):
+    """
+    Check the health of the configured LLM provider.
+    Supports overriding params for debugging: ?provider=...&base_url=...
+    """
     provider = request.query_params.get("provider") or _get_llm_provider()
 
+    # Determine mode
     mode = "remote"
     if provider in ("mock", "llama_cpp"):
         mode = "local"
 
+    # Determine environment
     env_mode = (
         "development" if os.environ.get("DJANGO_ENV") != "production" else "production"
     )
 
-    common_data = {
+    # Base response data
+    data = {
         "ok": True,
         "provider": provider,
         "mode": mode,
         "environment": env_mode,
+        "timestamp": timezone.now(),
     }
 
+    # 1. Mock Provider
     if provider == "mock":
-        return Response(common_data)
+        return Response(data)
 
+    # 2. Llama.cpp (Local)
     if provider == "llama_cpp":
         try:
             _get_llama_cpp_instance()
-            return Response(common_data)
+            return Response(data)
         except Exception as e:
             return Response(
-                {"ok": False, "detail": str(e)},
+                {**data, "ok": False, "detail": str(e)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-    if provider == "openai_compat":
-        base_url = request.query_params.get("base_url") or os.environ.get(
-            "LLM_BASE_URL"
-        )
-
-    if provider == "llama_cpp":
-        try:
-            _get_llama_cpp_instance()
-            return Response({"ok": True, "provider": "llama_cpp"})
-        except Exception as e:
-            return Response(
-                {"ok": False, "detail": str(e)},
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
-
+    # 3. OpenAI Compatible (Remote/Local Server)
     if provider == "openai_compat":
         base_url = request.query_params.get("base_url") or os.environ.get(
             "LLM_BASE_URL"
         )
         model = request.query_params.get("model") or os.environ.get("LLM_MODEL", "")
         timeout_s = 5
+
         if not base_url:
             return Response(
                 {
+                    **data,
                     "ok": False,
-                    "provider": "openai_compat",
                     "error_type": "config_error",
                     "detail": "LLM_BASE_URL not set",
                 },
@@ -1077,62 +1078,74 @@ def llm_health(request):
             )
 
         normalized_url = _normalize_openai_base_url(base_url)
-
         models_url = f"{normalized_url.rstrip('/')}/models"
+
+        # Merge config info into response
+        data.update(
+            {
+                "base_url": normalized_url,
+                "model": model,
+                "checked_url": models_url,
+            }
+        )
+
         t0 = pytime.perf_counter()
         req = urllib.request.Request(models_url, method="GET")
         try:
             with urlopen(req, timeout=timeout_s) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                resp_data = json.loads(resp.read().decode("utf-8"))
+
             latency_ms = int((pytime.perf_counter() - t0) * 1000)
-            return Response(
+            data.update(
                 {
-                    "ok": True,
-                    "provider": "openai_compat",
-                    "base_url": normalized_url,
-                    "model": model,
                     "latency_ms": latency_ms,
-                    "checked_url": models_url,
-                    "timeout_s": timeout_s,
-                    "available_models": data,
-                },
-                status=status.HTTP_200_OK,
+                    "available_models": resp_data,
+                }
             )
+            return Response(data, status=status.HTTP_200_OK)
+
         except (urllib.error.URLError, socket.timeout) as e:
             latency_ms = int((pytime.perf_counter() - t0) * 1000)
             return Response(
                 {
+                    **data,
                     "ok": False,
-                    "provider": "openai_compat",
-                    "base_url": normalized_url,
-                    "model": model,
                     "latency_ms": latency_ms,
-                    "checked_url": models_url,
-                    "timeout_s": timeout_s,
                     "error_type": "connection_error",
                     "detail": str(e),
-                    "hint": "Start the OpenAI-compatible LLM server and verify LLM_BASE_URL (use 127.0.0.1 on Windows).",
+                    "hint": "Check LLM_BASE_URL (use 127.0.0.1 on Windows).",
                 },
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         except Exception as e:
-            latency_ms = int((pytime.perf_counter() - t0) * 1000)
             return Response(
-                {
-                    "ok": False,
-                    "provider": "openai_compat",
-                    "base_url": normalized_url,
-                    "model": model,
-                    "latency_ms": latency_ms,
-                    "checked_url": models_url,
-                    "timeout_s": timeout_s,
-                    "error_type": "unknown_error",
-                    "detail": str(e),
-                    "hint": "Unexpected error while checking /v1/models; inspect server logs and configuration.",
-                },
+                {**data, "ok": False, "error_type": "unknown_error", "detail": str(e)},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
+
     return Response(
-        {"ok": False, "detail": f"Unknown provider: {provider}"},
+        {**data, "ok": False, "detail": f"Unknown provider: {provider}"},
         status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def chat_config(request):
+    """
+    Return static configuration for the chat module.
+    Useful for the frontend features like showing Local badge.
+    """
+    provider = _get_llm_provider()
+    return Response(
+        {
+            "provider": provider,
+            "model": os.environ.get("LLM_MODEL", "default"),
+            "base_url": os.environ.get("LLM_BASE_URL", ""),
+            "features": {
+                "dry_run": True,
+                "history_limit": True,
+                "session_summary": True,
+            },
+        }
     )
