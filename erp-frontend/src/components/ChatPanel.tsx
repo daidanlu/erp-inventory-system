@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Card, List, Input, Button, Avatar, Table, Descriptions } from "antd";
-import { UserOutlined, RobotOutlined, SendOutlined } from '@ant-design/icons';
+import { Card, List, Input, Button, Avatar, Table, Descriptions, Tag, Drawer, Spin, Tooltip } from "antd";
+import { UserOutlined, RobotOutlined, SendOutlined, HistoryOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
 import type { ChatMessage, ChatResponse } from "../types/chat";
 
 const { TextArea } = Input;
 
+// --- Types ---
 type ToolResultLowStock = {
   tool: "low_stock";
   threshold: number;
@@ -25,17 +26,78 @@ type ToolResult = ToolResultLowStock | ToolResultOrdersToday | { tool: string;[k
 type ChatResponseWithTool = ChatResponse & { tool_result?: ToolResult | null };
 type ChatMessageWithTool = ChatMessage & { toolResult?: ToolResult | null };
 
+type ChatSessionSummary = {
+  session_id: string;
+  summary: string;
+  last_time: string;
+};
+
+type ChatConfig = {
+  provider: string;
+  model: string;
+  features: {
+    dry_run: boolean;
+    session_summary: boolean;
+  };
+};
+
 export const ChatPanel: React.FC = () => {
   const [sessionId, setSessionId] = useState<string>("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState("");
 
-  // scroll to the bottom of the reference
+  // New State for Config & History
+  const [config, setConfig] = useState<ChatConfig | null>(null);
+  const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  // 1. Load Config on Mount
+  useEffect(() => {
+    axios.get('/api/chat/config/')
+      .then(res => setConfig(res.data))
+      .catch(err => {
+        console.error("Failed to load chat config", err);
+        setConfig({
+          provider: "unknown",
+          model: "unknown",
+          features: { dry_run: false, session_summary: false }
+        });
+      });
+  }, []);
+  
+  // 2. Load History when Drawer opens
+  useEffect(() => {
+    if (historyOpen) {
+      setSessionsLoading(true);
+      axios.get('/api/chat/sessions/?limit=20')
+        .then(res => setSessions(res.data))
+        .catch(err => console.error("Failed to load sessions", err))
+        .finally(() => setSessionsLoading(false));
+    }
+  }, [historyOpen]);
+
+  // 3. Load specific session messages
+  const loadSession = async (sid: string) => {
+    setLoading(true);
+    try {
+      // Fetch history for this session
+      const res = await axios.get(`/api/chat/history/?session_id=${sid}`);
+      setSessionId(sid);
+      setMessages(res.data.messages || []);
+      setHistoryOpen(false);
+    } catch (err) {
+      console.error("Failed to load session history", err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -97,7 +159,6 @@ export const ChatPanel: React.FC = () => {
       );
     }
 
-
     return (
       <pre style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap" }}>
         {JSON.stringify(toolResult, null, 2)}
@@ -109,14 +170,12 @@ export const ChatPanel: React.FC = () => {
     const trimmed = input.trim();
     if (!trimmed || loading) return;
 
-    // 1. display the message sent by the user on the interface
     const userMsg: ChatMessage = { role: "user", content: trimmed };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setLoading(true);
 
     try {
-      // 2. send request
       const resp = await axios.post<ChatResponseWithTool>(
         "/api/chat/",
         sessionId
@@ -126,14 +185,11 @@ export const ChatPanel: React.FC = () => {
 
       const data = resp.data;
 
-      // update session_id to maintain session
       if (data.session_id) {
         setSessionId(data.session_id);
       }
 
-      // 3. Sync UI with server-side history to avoid drift.
       if (Array.isArray(data.history)) {
-        // Server history does not include tool_result; attach tool_result to the latest bot message in UI.
         const history = data.history as ChatMessageWithTool[];
         const toolResult = (data as any).tool_result ?? null;
         if (toolResult) {
@@ -167,69 +223,125 @@ export const ChatPanel: React.FC = () => {
     }
   };
 
+  // Helper to determine badge color based on provider
+  const getProviderTag = () => {
+    if (!config) return <Tag>Connecting...</Tag>;
+    const p = config.provider;
+    if (p === 'llama_cpp') return <Tag color="success" icon={<RobotOutlined />}>Local Llama</Tag>;
+    if (p === 'openai_compat') return <Tag color="blue" icon={<RobotOutlined />}>Remote AI</Tag>;
+    return <Tag color="default">Mock</Tag>;
+  };
+
   return (
-    <Card
-      title="🤖 AI Assistant"
-      bordered={false}
-      style={{ height: '100%', display: "flex", flexDirection: "column" }}
-      styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden' } }}
-    >
-      <div style={{ flex: 1, overflowY: "auto", marginBottom: 12, paddingRight: 4 }}>
-        <List
-          dataSource={messages}
-          rowKey={(msg) =>
-            msg.id != null ? String(msg.id) : (msg.created_at ?? `${msg.role}-${msg.content}`)
-          }
-          split={false}
-          renderItem={(msg) => (
-            <List.Item style={{ justifyContent: msg.role === "user" ? "flex-end" : "flex-start", padding: '4px 0' }}>
-              <div style={{ display: 'flex', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', alignItems: 'flex-start', maxWidth: '90%' }}>
-                <Avatar
-                  size="small"
-                  icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
-                  style={{ backgroundColor: msg.role === 'user' ? '#1677ff' : '#52c41a', margin: '0 8px' }}
-                />
-                <div
-                  style={{
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    background: msg.role === "user" ? "#e6f7ff" : "#f5f5f5",
-                    border: msg.role === 'user' ? '1px solid #91caff' : '1px solid #f0f0f0',
-                    color: "rgba(0, 0, 0, 0.88)",
-                    wordBreak: 'break-word'
-                  }}
-                >
-                  <div>{msg.content}</div>
-                  {(msg as ChatMessageWithTool).toolResult ? renderToolBlock((msg as ChatMessageWithTool).toolResult as ToolResult) : null}
-                </div>
-              </div>
-            </List.Item>
+    <>
+      <Card
+        title={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>🤖 AI Assistant</span>
+            <div style={{ fontWeight: 'normal' }}>{getProviderTag()}</div>
+          </div>
+        }
+        extra={
+          <Tooltip title="History">
+            <Button
+              type="text"
+              icon={<HistoryOutlined />}
+              onClick={() => setHistoryOpen(true)}
+            />
+          </Tooltip>
+        }
+        bordered={false}
+        style={{ height: '100%', display: "flex", flexDirection: "column" }}
+        styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden' } }}
+      >
+        <div style={{ flex: 1, overflowY: "auto", marginBottom: 12, paddingRight: 4 }}>
+          {messages.length === 0 && (
+            <div style={{ textAlign: 'center', marginTop: 40, color: '#999' }}>
+              <InfoCircleOutlined style={{ fontSize: 24, marginBottom: 8 }} />
+              <p>Ask me about stock levels or orders.</p>
+            </div>
           )}
-        />
-        <div ref={messagesEndRef} />
-      </div>
-
-
-      <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
-        <TextArea
-          rows={2}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onPressEnter={(e) => {
-            if (!e.shiftKey) {
-              e.preventDefault();
-              sendMessage();
+          <List
+            dataSource={messages}
+            rowKey={(msg) =>
+              msg.id != null ? String(msg.id) : (msg.created_at ?? `${msg.role}-${msg.content}`)
             }
-          }}
-          placeholder="Ask about inventory..."
-          style={{ resize: 'none', marginBottom: 8 }}
-        />
-        <div style={{ textAlign: "right" }}>
-          <Button type="primary" onClick={sendMessage} loading={loading} disabled={!input.trim()} icon={<SendOutlined />}>
-            Send
-          </Button>
+            split={false}
+            renderItem={(msg) => (
+              <List.Item style={{ justifyContent: msg.role === "user" ? "flex-end" : "flex-start", padding: '4px 0' }}>
+                <div style={{ display: 'flex', flexDirection: msg.role === 'user' ? 'row-reverse' : 'row', alignItems: 'flex-start', maxWidth: '90%' }}>
+                  <Avatar
+                    size="small"
+                    icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
+                    style={{ backgroundColor: msg.role === 'user' ? '#1677ff' : '#52c41a', margin: '0 8px' }}
+                  />
+                  <div
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 8,
+                      background: msg.role === "user" ? "#e6f7ff" : "#f5f5f5",
+                      border: msg.role === 'user' ? '1px solid #91caff' : '1px solid #f0f0f0',
+                      color: "rgba(0, 0, 0, 0.88)",
+                      wordBreak: 'break-word'
+                    }}
+                  >
+                    <div>{msg.content}</div>
+                    {(msg as ChatMessageWithTool).toolResult ? renderToolBlock((msg as ChatMessageWithTool).toolResult as ToolResult) : null}
+                  </div>
+                </div>
+              </List.Item>
+            )}
+          />
+          <div ref={messagesEndRef} />
         </div>
-      </div>
-    </Card>
+
+        <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
+          <TextArea
+            rows={2}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onPressEnter={(e) => {
+              if (!e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+              }
+            }}
+            placeholder="Ask about inventory..."
+            style={{ resize: 'none', marginBottom: 8 }}
+          />
+          <div style={{ textAlign: "right" }}>
+            <Button type="primary" onClick={sendMessage} loading={loading} disabled={!input.trim()} icon={<SendOutlined />}>
+              Send
+            </Button>
+          </div>
+        </div>
+      </Card>
+
+      {/* Session History Drawer */}
+      <Drawer
+        title="Chat History"
+        placement="right"
+        onClose={() => setHistoryOpen(false)}
+        open={historyOpen}
+        width={320}
+      >
+        {sessionsLoading ? <Spin /> : (
+          <List
+            dataSource={sessions}
+            renderItem={(item) => (
+              <List.Item
+                style={{ cursor: 'pointer', transition: 'background 0.3s' }}
+                onClick={() => loadSession(item.session_id)}
+              >
+                <List.Item.Meta
+                  title={item.summary || "New Chat"}
+                  description={<span style={{ fontSize: 11 }}>{new Date(item.last_time).toLocaleString()}</span>}
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Drawer>
+    </>
   );
 };

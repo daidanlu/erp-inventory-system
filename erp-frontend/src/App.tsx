@@ -42,9 +42,11 @@ let authExpiredNotified = false;
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken');
   const url = config.url ?? '';
-  // do not attach Authorization when calling token endpoints, otherwise an expired accessToken can break /api/token/ and /api/token/refresh/
-  const isTokenEndpoint = url.includes('/api/token/');
-  if (token && !isTokenEndpoint) {
+  const isPublicEndpoint = 
+    url.includes('/api/token/') || 
+    url.includes('/api/chat/');
+
+  if (token && !isPublicEndpoint) {
     const headers = (config.headers || {}) as any;
     headers.Authorization = `Bearer ${token}`;
     config.headers = headers;
