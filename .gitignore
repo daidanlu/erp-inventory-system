@@ -19,3 +19,5 @@ erp-frontend/.env
 erp-frontend/.vite
 
 change_email.sh
+models/
+
