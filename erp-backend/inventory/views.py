@@ -631,9 +631,46 @@ def _tool_orders_today(args: dict) -> dict:
     }
 
 
+def _tool_product_info(args: dict) -> dict:
+    """
+    Search for products by name (fuzzy match) and return details.
+    args:
+      - name (str): The search query (e.g. "Galaxy")
+    """
+    query = str(args.get("name") or "").strip()
+    if not query:
+        return {
+            "tool": "product_info",
+            "query": "",
+            "count": 0,
+            "results": [],
+            "error": "No product name specified.",
+        }
+
+    # limit to top 5 to avoid overflowing context window
+    qs = Product.objects.filter(name__icontains=query).order_by("name")[:5]
+
+    items = [
+        {
+            "sku": p.sku,
+            "name": p.name,
+            "stock": p.stock,
+        }
+        for p in qs
+    ]
+
+    return {
+        "tool": "product_info",
+        "query": query,
+        "count": len(items),
+        "results": items,
+    }
+
+
 TOOLS_REGISTRY = {
     "low_stock": _tool_low_stock,
     "orders_today": _tool_orders_today,
+    "product_info": _tool_product_info,
 }
 
 
@@ -690,6 +727,22 @@ def generate_llm_reply(
                 if total == 0:
                     return f"[MOCK_LLM] No products are at or below stock {threshold}."
                 return f"[MOCK_LLM] Found {total} low-stock products (≤ {threshold}); showing {returned}."
+
+            if t == "product_info":
+                query = tool_result.get("query")
+                count = tool_result.get("count") or 0
+                results = tool_result.get("results") or []
+
+                if count == 0:
+                    return (
+                        f"[MOCK_LLM] I couldn't find any products matching '{query}'."
+                    )
+
+                # Format a simple list for the mock reply
+                info_list = "; ".join(
+                    [f"{item['name']} (Stock: {item['stock']})" for item in results]
+                )
+                return f"[MOCK_LLM] Found {count} products for '{query}': {info_list}."
 
             # Unknown tool: still keep it readable
             return f'[MOCK_LLM] tool={t} session={session_id} | echo="{echo}"'
@@ -839,6 +892,33 @@ def chat_with_bot(request):
         # Regex Logic for Orders Today
         elif re.search(r"order.*today|today.*order|今日订单|今天订单", q):
             tool = "orders_today"
+
+        # Regex Logic for Product Lookup
+        # Matches: "price of Galaxy", "stock for iPhone", "search samsung", "check macbook"
+        elif re.search(
+            r"(?:price|stock|search|find|info|check|how\s+about|what\s+is)", q
+        ):
+            clean_q = re.sub(
+                r"^(?:please\s+|can\s+you\s+|would\s+you\s+)?(?:check|find|search|show|get|tell\s+me|how\s+about|what(?:'s|\s+is))\s*",
+                "",
+                q,
+            )
+
+            clean_q = re.sub(
+                r"^(?:the\s+)?(?:stock|price|info|details|inventory)\s*", "", clean_q
+            )
+
+            clean_q = re.sub(r"^(?:of|for|about|in)\s*", "", clean_q)
+
+            clean_q = re.sub(r"\s+(?:product|item|unit|sku)$", "", clean_q.strip())
+
+            product_name = clean_q.strip()
+
+            if product_name:
+                tool = "product_info"
+                if not isinstance(args, dict):
+                    args = {}
+                args["name"] = product_name
 
     # 3. Handle Dry Run (Early Return)
     # if dry_run, return directly, no save db and run tool steps

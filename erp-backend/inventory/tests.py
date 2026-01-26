@@ -697,6 +697,55 @@ class ChatApiMockRoutingTests(TestCase):
         self.assertIn(Order.STATUS_DRAFT, tr["by_status"])
         self.assertIn(Order.STATUS_CONFIRMED, tr["by_status"])
 
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_mock_routes_product_info_fuzzy_search(self):
+        # 1. Prepare data
+        Product.objects.create(sku="SAMSUNG-S24", name="Samsung Galaxy S24", stock=50)
+        Product.objects.create(sku="IPHONE-15", name="Apple iPhone 15", stock=20)
+
+        # 2. Test fuzzy query "Galaxy"
+        resp = self.client.post(
+            self.url,
+            {"message": "check stock for Galaxy"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        
+        data = resp.json()
+        tr = data["tool_result"]
+        
+        # 3. Verify Tool Execution
+        self.assertEqual(tr["tool"], "product_info")
+        self.assertEqual(tr["query"], "galaxy")
+        self.assertGreaterEqual(tr["count"], 1)
+        self.assertEqual(tr["results"][0]["sku"], "SAMSUNG-S24")
+
+        # 4. Verify Mock Reply
+        self.assertIn("Samsung Galaxy S24", data["reply"])
+        self.assertIn("Stock: 50", data["reply"])
+
+    
+    @patch.dict(os.environ, {"LLM_PROVIDER": "mock"}, clear=False)
+    def test_mock_routes_product_info_with_spaces(self):
+        Product.objects.create(sku="TA-001", name="Test A", stock=99)
+
+        resp = self.client.post(
+            self.url,
+            {"message": "how about the stock of Test A Product"},
+            format="json",
+        )
+        self.assertEqual(resp.status_code, 200)
+        
+        data = resp.json()
+        tr = data["tool_result"]
+        
+        self.assertEqual(tr["tool"], "product_info")
+        self.assertEqual(tr["query"], "test a")
+        
+        self.assertEqual(tr["count"], 1)
+        self.assertEqual(tr["results"][0]["sku"], "TA-001")
+        self.assertIn("Test A", data["reply"])
+
 
 class ChatSessionEndpointsTests(TestCase):
     def setUp(self):
