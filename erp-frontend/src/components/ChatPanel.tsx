@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from "react";
 import { Card, List, Input, Button, Avatar, Table, Descriptions, Tag, Drawer, Spin, Tooltip } from "antd";
 import { UserOutlined, RobotOutlined, SendOutlined, HistoryOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import axios from 'axios';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatMessage, ChatResponse } from "../types/chat";
 
 const { TextArea } = Input;
@@ -22,7 +24,15 @@ type ToolResultOrdersToday = {
   by_status: Record<string, number>;
 };
 
-type ToolResult = ToolResultLowStock | ToolResultOrdersToday | { tool: string;[k: string]: any };
+
+type ToolResultProductInfo = {
+  tool: "product_info";
+  query: string;
+  count: number;
+  results: Array<{ sku: string; name: string; stock: number }>;
+};
+
+type ToolResult = ToolResultLowStock | ToolResultOrdersToday | ToolResultProductInfo | { tool: string;[k: string]: any };
 type ChatResponseWithTool = ChatResponse & { tool_result?: ToolResult | null };
 type ChatMessageWithTool = ChatMessage & { toolResult?: ToolResult | null };
 
@@ -65,6 +75,7 @@ export const ChatPanel: React.FC = () => {
       .then(res => setConfig(res.data))
       .catch(err => {
         console.error("Failed to load chat config", err);
+        // Fallback default config
         setConfig({
           provider: "unknown",
           model: "unknown",
@@ -72,7 +83,7 @@ export const ChatPanel: React.FC = () => {
         });
       });
   }, []);
-  
+
   // 2. Load History when Drawer opens
   useEffect(() => {
     if (historyOpen) {
@@ -88,7 +99,6 @@ export const ChatPanel: React.FC = () => {
   const loadSession = async (sid: string) => {
     setLoading(true);
     try {
-      // Fetch history for this session
       const res = await axios.get(`/api/chat/history/?session_id=${sid}`);
       setSessionId(sid);
       setMessages(res.data.messages || []);
@@ -107,13 +117,22 @@ export const ChatPanel: React.FC = () => {
   const renderToolBlock = (toolResult: ToolResult) => {
     if (!toolResult || typeof toolResult !== "object") return null;
 
+
+    const cardStyle: React.CSSProperties = {
+      marginTop: 8,
+      background: '#fff',
+      padding: 8,
+      borderRadius: 4,
+      border: '1px solid #eee'
+    };
+
     if (toolResult.tool === "low_stock") {
       const tr = toolResult as ToolResultLowStock;
       const dataSource = Array.isArray(tr.items) ? tr.items : [];
       return (
-        <div style={{ marginTop: 8 }}>
+        <div style={cardStyle}>
           <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.75 }}>
-            Low stock (≤ {tr.threshold}) · total {tr.total} · showing {tr.returned}
+            📉 Low stock (≤ {tr.threshold}) · Found {tr.total}
           </div>
           <Table
             size="small"
@@ -121,9 +140,9 @@ export const ChatPanel: React.FC = () => {
             dataSource={dataSource}
             rowKey={(r) => String(r.id ?? r.sku)}
             columns={[
-              { title: "SKU", dataIndex: "sku", key: "sku", width: 120 },
-              { title: "Name", dataIndex: "name", key: "name" },
-              { title: "Stock", dataIndex: "stock", key: "stock", width: 90 },
+              { title: "SKU", dataIndex: "sku", key: "sku", width: 100 },
+              { title: "Name", dataIndex: "name", key: "name", ellipsis: true },
+              { title: "Qty", dataIndex: "stock", key: "stock", width: 60, render: (v) => <Tag color="red">{v}</Tag> },
             ]}
           />
         </div>
@@ -135,32 +154,53 @@ export const ChatPanel: React.FC = () => {
       const by = tr.by_status || {};
       const entries = Object.entries(by);
       return (
-        <div style={{ marginTop: 8 }}>
+        <div style={cardStyle}>
           <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.75 }}>
-            Orders today · {tr.date}
+            📅 Orders today · {tr.date}
           </div>
           <Descriptions size="small" column={1} bordered>
-            <Descriptions.Item label="Total">{tr.total}</Descriptions.Item>
-            <Descriptions.Item label="By status">
+            <Descriptions.Item label="Total Orders"><strong>{tr.total}</strong></Descriptions.Item>
+            <Descriptions.Item label="Breakdown">
               {entries.length ? (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                   {entries.map(([k, v]) => (
-                    <span key={k} style={{ fontSize: 12 }}>
-                      <strong>{k}</strong>: {v}
-                    </span>
+                    <Tag key={k} style={{ margin: 0 }}>{k}: {v}</Tag>
                   ))}
                 </div>
-              ) : (
-                <span style={{ fontSize: 12, opacity: 0.75 }}>No breakdown</span>
-              )}
+              ) : "No data"}
             </Descriptions.Item>
           </Descriptions>
         </div>
       );
     }
 
+    if (toolResult.tool === "product_info") {
+      const tr = toolResult as ToolResultProductInfo;
+      const dataSource = Array.isArray(tr.results) ? tr.results : [];
+      return (
+        <div style={cardStyle}>
+          <div style={{ fontSize: 12, marginBottom: 6, opacity: 0.75 }}>
+            🔍 Search: "{tr.query}" · Found {tr.count}
+          </div>
+          {dataSource.length > 0 ? (
+            <Table
+              size="small"
+              pagination={false}
+              dataSource={dataSource}
+              rowKey="sku"
+              columns={[
+                { title: "Name", dataIndex: "name", key: "name" },
+                { title: "SKU", dataIndex: "sku", key: "sku" },
+                { title: "Stock", dataIndex: "stock", key: "stock", render: (v) => <Tag color={v > 10 ? 'green' : 'orange'}>{v}</Tag> },
+              ]}
+            />
+          ) : <div style={{ fontStyle: 'italic', color: '#999' }}>No products found.</div>}
+        </div>
+      );
+    }
+
     return (
-      <pre style={{ marginTop: 8, fontSize: 12, whiteSpace: "pre-wrap" }}>
+      <pre style={{ marginTop: 8, fontSize: 11, background: '#333', color: '#fff', padding: 4, borderRadius: 4 }}>
         {JSON.stringify(toolResult, null, 2)}
       </pre>
     );
@@ -192,12 +232,10 @@ export const ChatPanel: React.FC = () => {
       if (Array.isArray(data.history)) {
         const history = data.history as ChatMessageWithTool[];
         const toolResult = (data as any).tool_result ?? null;
-        if (toolResult) {
-          for (let i = history.length - 1; i >= 0; i--) {
-            if (history[i]?.role === "bot") {
-              history[i] = { ...(history[i] as any), toolResult };
-              break;
-            }
+        if (toolResult && history.length > 0) {
+          const lastIdx = history.length - 1;
+          if (history[lastIdx].role === 'bot') {
+            history[lastIdx] = { ...history[lastIdx], toolResult };
           }
         }
         setMessages(history);
@@ -223,7 +261,6 @@ export const ChatPanel: React.FC = () => {
     }
   };
 
-  // Helper to determine badge color based on provider
   const getProviderTag = () => {
     if (!config) return <Tag>Connecting...</Tag>;
     const p = config.provider;
@@ -258,7 +295,7 @@ export const ChatPanel: React.FC = () => {
           {messages.length === 0 && (
             <div style={{ textAlign: 'center', marginTop: 40, color: '#999' }}>
               <InfoCircleOutlined style={{ fontSize: 24, marginBottom: 8 }} />
-              <p>Ask me about stock levels or orders.</p>
+              <p>Ask me about stock levels or check specific products.</p>
             </div>
           )}
           <List
@@ -282,10 +319,18 @@ export const ChatPanel: React.FC = () => {
                       background: msg.role === "user" ? "#e6f7ff" : "#f5f5f5",
                       border: msg.role === 'user' ? '1px solid #91caff' : '1px solid #f0f0f0',
                       color: "rgba(0, 0, 0, 0.88)",
-                      wordBreak: 'break-word'
+                      wordBreak: 'break-word',
+                      maxWidth: '100%'
                     }}
                   >
-                    <div>{msg.content}</div>
+                    {/* Markdown */}
+                    <div style={{ lineHeight: '1.6' }}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {msg.content}
+                      </ReactMarkdown>
+                    </div>
+
+
                     {(msg as ChatMessageWithTool).toolResult ? renderToolBlock((msg as ChatMessageWithTool).toolResult as ToolResult) : null}
                   </div>
                 </div>
@@ -306,7 +351,7 @@ export const ChatPanel: React.FC = () => {
                 sendMessage();
               }
             }}
-            placeholder="Ask about inventory..."
+            placeholder="Type 'Check stock for Test A'..."
             style={{ resize: 'none', marginBottom: 8 }}
           />
           <div style={{ textAlign: "right" }}>
