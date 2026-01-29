@@ -1,11 +1,14 @@
 # ERP Inventory System
 
+![ERP Dashboard with AI Chat Preview 1](docs/images/1.png)
+![ERP Dashboard with AI Chat Preview 2](docs/images/2.png)
+
 Prototype ERP / warehouse management system for **PAL Enterprises**, designed to evaluate replacing an existing SaaS tool (e.g. Dianxiaomi).  
 The system tracks **customers, products, orders, inventory levels, and stock movements**, and exposes a REST API consumed by a React + Ant Design dashboard.
 
-> Status: **working full‑stack prototype**  
-> • Backend: Django + DRF API with inventory rules, CSV exports, dashboard metrics, and a simple chat/assistant endpoint.  
-> • Frontend: Vite + React + Ant Design dashboard (summary cards, product table, low‑stock alert, order creation modal, and an AI assistant panel).
+> Status: **Advanced Full-Stack Prototype**
+> • **Backend**: Django + DRF API with inventory rules, dashboard metrics, and a **Regex-enhanced AI agent** capable of intent recognition (RAG-lite).
+> • **Frontend**: React + Ant Design dashboard with **Markdown-rendered AI chat**, rich data tables, and dynamic stock visualizations.
 
 ---
 
@@ -34,6 +37,7 @@ The system tracks **customers, products, orders, inventory levels, and stock mov
 - **Bundler**: Vite
 - **UI Library**: Ant Design
 - **HTTP**: Axios
+- **Markdown**: react-markdown + remark-gfm (for AI response rendering)
 
 The frontend is a single‑page dashboard that talks to the Django backend at `/api/...`.
 
@@ -467,72 +471,33 @@ Semantics:
 Function view: `chat_with_bot`
 
 - `POST /api/chat/`
-- Request body:
-
-  ```json
-  {
-    "session_id": "optional string",
-    "message": "User question here"
-  }
-  ```
-
 - Behavior:
-  - If `session_id` is omitted or empty, a new hex id is generated.
-  - Saves the user message as a `ChatMessage` with `role="user"`.
-  - Generates a reply with `simple_bot_reply(message)`:
-    - For now, this is a simple keyword‑based helper that points users to `/api/products/`, `/api/products/low_stock/`, `/api/orders/`, etc.
-  - Saves the bot reply as a `ChatMessage` with `role="bot"`.
-  - Loads the latest 10 messages for that `session_id` (sorted by time) and returns:
+  - **NLU Processing**: Sanitizes input (removes "can you check", "please", etc.) to extract core entities.
+  - **Tool Execution**: Matches intents (`product_info`, `low_stock`, `orders_today`) and queries the database.
+  - **Response Generation**: Returns a JSON payload containing both the text reply and structured `tool_result` for frontend rendering.
 
-    ```json
-    {
-      "session_id": "same or new session id",
-      "reply": "bot reply text",
-      "history": [
-        { "id": 1, "role": "user", ... },
-        { "id": 2, "role": "bot", ... }
-      ]
-    }
-    ```
+## AI Assistant & NLU Features
 
-This is a placeholder endpoint that can later be wired to a real LLM / NLU backend.
+The project features a context-aware AI assistant (`/api/chat/`) that understands natural language queries to retrieve ERP data.
 
- ---
+### Key Capabilities
+1.  **Intent Recognition**: Uses regex-based NLU ("onion peeling" strategy) to parse user intent from natural language.
+    * *"Check stock for Galaxy S24"* -> Extracts "Galaxy S24" -> Queries DB -> Returns Table.
+    * *"Orders today"* -> Aggregates daily stats.
+2.  **Rich Visualization**: The frontend renders AI responses using **Markdown** (bold, lists) and injects **custom UI components** (tables, badges) for data results.
+3.  **Authentication Bypass**: Chat endpoints are public-facing (configured via Axios interceptors) to ensure always-on availability even if the staff session expires.
 
- ## AI Chat Module
+### Supported Tools (Mock & Live)
+| Tool | Trigger Example | Behavior |
+| :--- | :--- | :--- |
+| **Product Lookup** | "Check stock for Test A" | Fuzzy searches product by name and displays SKU/Stock table. |
+| **Low Stock** | "Show low stock items" | Lists items below the safety threshold. |
+| **Daily Orders** | "Orders today" | Summarizes draft, confirmed, and cancelled orders for the current date. |
 
- This project includes a lightweight AI-assisted chat interface designed for ERP-style queries.
-
- ### Supported Modes
-
- - `mock` – deterministic local testing (default)
- - `openai_compat` – compatible with OpenAI-style APIs or local LLM servers
- - `llama.cpp` – optional local GGUF inference (experimental)
-
- ### Health Check Endpoint
-
- `GET /api/chat/health/`
-
- Returns the current LLM backend status:
-
- Example response:
-
- ```json
- {
-   "ok": false,
-   "provider": "openai_compat",
-   "base_url": "[http://127.0.0.1:8002/v1](http://127.0.0.1:8002/v1)",
-   "error_type": "connection_error"
- }
- ```
-
- This endpoint is used for:
-
- - runtime diagnostics
- - deployment validation
- - CI testing
-
-  ---
+### Inference Modes
+- **Mock (Default)**: Deterministic, regex-based responder. Great for demos without GPU.
+- **Local Llama**: Connects to a local `llama.cpp` server for offline LLM inference.
+- **OpenAI Compatible**: Connects to any v1-compatible endpoint (e.g., vLLM, Ollama).
 
 ## Frontend (High‑Level)
 
