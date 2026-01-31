@@ -8,7 +8,7 @@ import type { ChatMessage, ChatResponse } from "../types/chat";
 
 const { TextArea } = Input;
 
-// --- Types ---
+// --- Types (保持不变) ---
 type ToolResultLowStock = {
   tool: "low_stock";
   threshold: number;
@@ -63,10 +63,15 @@ export const ChatPanel: React.FC = () => {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (listRef.current) {
+      listRef.current.scrollTo({
+        top: listRef.current.scrollHeight,
+        behavior: "smooth",
+      });
+    }
   };
 
   // 1. Load Config on Mount
@@ -291,7 +296,7 @@ export const ChatPanel: React.FC = () => {
         style={{ height: '100%', display: "flex", flexDirection: "column" }}
         styles={{ body: { flex: 1, display: 'flex', flexDirection: 'column', padding: 12, overflow: 'hidden' } }}
       >
-        <div style={{ flex: 1, overflowY: "auto", marginBottom: 12, paddingRight: 4 }}>
+        <div ref={listRef} style={{ flex: 1, overflowY: "auto", marginBottom: 12, paddingRight: 4 }}>
           {messages.length === 0 && (
             <div style={{ textAlign: 'center', marginTop: 40, color: '#999' }}>
               <InfoCircleOutlined style={{ fontSize: 24, marginBottom: 8 }} />
@@ -337,7 +342,6 @@ export const ChatPanel: React.FC = () => {
               </List.Item>
             )}
           />
-          <div ref={messagesEndRef} />
         </div>
 
         <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>

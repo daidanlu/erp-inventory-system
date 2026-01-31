@@ -1,7 +1,14 @@
 # ERP Inventory System
 
-![ERP Dashboard with AI Chat Preview 1](docs/images/1.png)
-![ERP Dashboard with AI Chat Preview 2](docs/images/2.png)
+<div align="center">
+
+| **Dashboard Overview** | **AI Assistant & Chat** |
+| :---: | :---: |
+| <img src="docs/images/1.png" width="400" /> | <img src="docs/images/2.png" width="400" /> |
+| **Order Management** | **Customer List** |
+| <img src="docs/images/3.png" width="400" /> | <img src="docs/images/4.png" width="400" /> |
+
+</div>
 
 Prototype ERP / warehouse management system for **PAL Enterprises**, designed to evaluate replacing an existing SaaS tool (e.g. Dianxiaomi).  
 The system tracks **customers, products, orders, inventory levels, and stock movements**, and exposes a REST API consumed by a React + Ant Design dashboard.
