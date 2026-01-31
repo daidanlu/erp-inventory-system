@@ -27,6 +27,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, AllowAny
+from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
@@ -51,11 +52,16 @@ from .serializers import (
 )
 from .permissions import IsStaffOrReadOnly
 
+class StandardResultsSetPagination(PageNumberPagination):
+    page_size = 10
+    page_size_query_param = 'page_size'
+    max_page_size = 1000
 
 class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [IsStaffOrReadOnly]
+    pagination_class = StandardResultsSetPagination
 
     # exact filter field: ?stock=100, ?sku=P001
     filterset_fields = {
@@ -188,6 +194,7 @@ class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all().order_by("-created_at")
     serializer_class = OrderSerializer
     permission_classes = [AllowAny]
+    pagination_class = StandardResultsSetPagination
 
     filter_backends = [
         DjangoFilterBackend,
@@ -289,6 +296,7 @@ class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = StockMovement.objects.select_related("product", "order")
     serializer_class = StockMovementSerializer
     permission_classes = [IsStaffOrReadOnly]
+    pagination_class = StandardResultsSetPagination
 
     filterset_fields = {
         "product": ["exact"],
@@ -305,6 +313,7 @@ class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all().order_by("name")
     serializer_class = CustomerSerializer
     permission_classes = [IsStaffOrReadOnly]
+    pagination_class = StandardResultsSetPagination
 
     filterset_fields = {
         "name": ["exact", "icontains"],

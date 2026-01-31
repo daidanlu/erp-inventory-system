@@ -28,22 +28,20 @@ import CustomersPage from './components/CustomersPage';
 const { Header, Content } = Layout;
 const { Text } = Typography;
 
-/**
- * Global Axios Configuration:
- * - Backend base URL points to 127.0.0.1:8000
- * - Each request automatically includes Authorization: Bearer <accessToken>
- */
 axios.defaults.baseURL = 'http://127.0.0.1:8000';
 axios.defaults.withCredentials = false;
+
 // Single-flight refresh to avoid spamming /api/token/refresh/ on concurrent 401s.
 let refreshInFlight: Promise<string | null> | null = null;
 // Prevent repeated session expired UX spam.
 let authExpiredNotified = false;
+
 axios.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken');
   const url = config.url ?? '';
-  const isPublicEndpoint = 
-    url.includes('/api/token/') || 
+  // Skip auth for login and chat (optional)
+  const isPublicEndpoint =
+    url.includes('/api/token/') ||
     url.includes('/api/chat/');
 
   if (token && !isPublicEndpoint) {
@@ -212,7 +210,7 @@ function App() {
         overflow: 'hidden',
       }}
     >
-      {/* Top Header: Title on the left, login status + login/logout + New Order on the right */}
+      {/* Top Header */}
       <Header
         style={{
           display: 'flex',
@@ -268,10 +266,11 @@ function App() {
         {/* 1. Dashboard summary */}
         <DashboardSummary key={`dash-${refreshKey}`} />
 
-        <Row gutter={24} style={{ marginTop: 24 }}>
+        <Row gutter={24} style={{ marginTop: 24, display: 'flex' }} align="stretch">
+
           {/* 2. left: ProductList */}
-          <Col span={16}>
-            <div style={{ background: '#fff', padding: 24, borderRadius: 8 }}>
+          <Col span={16} style={{ display: 'flex', flexDirection: 'column' }}>
+            <div style={{ background: '#fff', padding: 24, borderRadius: 8, height: '100%' }}>
               <div
                 style={{
                   display: 'flex',
@@ -302,12 +301,16 @@ function App() {
             <div style={{ flex: '0 0 auto' }}>
               <LowStockTable key={`low-${refreshKey}`} />
             </div>
+
             <div
               style={{
-                height: 500,
+                flex: 1,
+                minHeight: 400,
                 background: '#fff',
                 borderRadius: 8,
                 overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column'
               }}
             >
               <ChatPanel />

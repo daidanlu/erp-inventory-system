@@ -31,14 +31,22 @@ const CustomersPage: React.FC = () => {
     setLoading(true);
     try {
       const resp = await axios.get<CustomerListResponse>('/api/customers/', {
-        params: { page: pageNum },
+        params: {
+          page: pageNum,
+          page_size: 10
+        },
       });
 
       const payload = resp.data;
       const items = payload.results;
       setData(items);
       setTotal(payload.count ?? items.length);
-    } catch (err) {
+    } catch (err: any) {
+      if (err?.response?.status === 404 && pageNum > 1) {
+        console.warn("Page out of range, resetting to page 1.");
+        setPage(1);
+        return;
+      }
       console.error('Failed to load customers', err);
       message.error('Failed to load customers.');
     } finally {
@@ -121,7 +129,6 @@ const CustomersPage: React.FC = () => {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onSuccess={() => {
-          // refresh list; avoid missing refresh when already on page 1
           if (page !== 1) setPage(1);
           else fetchCustomers(1);
         }}
